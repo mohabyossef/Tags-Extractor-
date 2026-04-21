@@ -119,29 +119,4 @@ if check_password():
         st.title("🏷️ Hobz AI Menu Tagger")
         blacklist, clean_tags = load_tagging_data()
         
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            res_name = st.text_input("Restaurant Name")
-            menu_input = st.text_area("Paste Menu Categories (One per line)", height=300)
-            
-        if menu_input:
-            lines = [line.strip() for line in menu_input.split('\n') if line.strip()]
-            main_items = [l for l in lines if not any(b in l.lower() for b in blacklist)]
-            if not main_items: main_items = lines
-            
-            total_main = len(main_items)
-            counts = pd.Series(main_items).value_counts()
-            
-            normal_proposals = []
-            for item, count in counts.items():
-                perc = (count / total_main) * 100
-                if perc >= 30:
-                    matches = [t for t in clean_tags if item.lower() in str(t).lower() and "Subpage" not in str(t)]
-                    if matches:
-                        best_match = min(matches, key=len)
-                        normal_proposals.append(str(best_match))
-
-            cuisine_proposals = []
-            search_text = (res_name + " " + " ".join(main_items)).lower()
-            for t in clean_tags:
-                if "Subpage" not in str(t)
+        col1, col2 = st.columns([1,
