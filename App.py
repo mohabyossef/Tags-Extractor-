@@ -31,11 +31,10 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Hobz AI Hub", layout="wide")
 
-    # --- 2. DATA LOADERS (Smart Format Detection) ---
+    # --- 2. DATA LOADERS ---
     @st.cache_data
     def load_tagging_resources():
         blacklist, clean_tags = [], []
-        
         def try_read(base_name):
             if os.path.exists(f"{base_name}.csv"):
                 return pd.read_csv(f"{base_name}.csv")
@@ -49,12 +48,9 @@ if check_password():
             
         tags_df = try_read("tags")
         if tags_df is not None:
-            # We grab the first column as the tag names
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
-            # Remove marketing/campaign noise
             campaign_regex = r"%|off|sale|sar|jod|deal|offer|discount|promo"
             clean_tags = [t for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
-            
         return blacklist, clean_tags
 
     @st.cache_data
@@ -96,13 +92,10 @@ if check_password():
         st.session_state["password_correct"] = False
         st.rerun()
 
-    # --- MODULE 2: MENU TAGGER ---
+    # --- MODULE: MENU TAGGER ---
     if mode == "🏷️ Menu Tagger":
         st.title("🏷️ Hobz AI Menu Tagger")
         blacklist, clean_tags = load_tagging_resources()
-        
-        if not clean_tags:
-            st.error("⚠️ Database Error: 'tags' file not found.")
         
         col1, col2 = st.columns([1, 2])
         with col1:
@@ -111,9 +104,7 @@ if check_password():
             
         if upload_file:
             df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
-            
             if len(df.columns) >= 2:
-                # Column 0: Category, Column 1: Item Name
                 df_clean = df[~df.iloc[:, 0].astype(str).str.lower().str.strip().isin(blacklist)].copy()
                 df_clean['merged'] = df_clean.iloc[:, 0].astype(str) + " " + df_clean.iloc[:, 1].astype(str)
                 merged_items = df_clean['merged'].tolist()
@@ -123,25 +114,17 @@ if check_password():
                     item_stats = []
                     for tag in clean_tags:
                         if "Subpage" in str(tag): continue
-                        
                         t_lower = str(tag).lower().strip()
-                        # Check if tag is in merged context (e.g. "Pie" in "Pastry Apple Pie")
                         match_count = sum(1 for context in merged_items if t_lower in context.lower())
-                        
                         if match_count > 0:
                             item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                     
                     stats_df = pd.DataFrame(item_stats)
 
-                    # --- MULTI-TAG 30% LOGIC ---
                     normal_tags = []
                     if not stats_df.empty:
-                        # Grab all tags crossing the 30% threshold
                         high_perc = stats_df[stats_df['perc'] >= 30]
                         if not high_perc.empty:
                             normal_tags = high_perc['tag'].tolist()
                         else:
-                            # Fallback: Top 3 highest matches
-                            normal_tags = stats_df.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
-                    
-                    normal_tags = list(set(normal
+                            normal_tags = stats_df.sort_values(by='perc', ascending=False).head(3)['tag
