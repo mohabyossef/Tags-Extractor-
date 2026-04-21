@@ -147,4 +147,55 @@ if check_password():
 
                     with col2:
                         st.subheader("📋 Audit Results")
-                        st.write(f"Analyzed **{total_count}**
+                        st.write(f"Analyzed **{total_count}** main items.")
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            st.write("**Cuisine Tags**")
+                            for c in cuisine_tags if cuisine_tags else ["N/A"]: st.success(c)
+                        with c2:
+                            st.write("**Normal Tags (Purple)**")
+                            if normal_tags:
+                                for n in normal_tags:
+                                    if n in stats_df['tag'].values:
+                                        p_val = stats_df[stats_df['tag'] == n]['perc'].values[0]
+                                        st.button(f"{n} ({p_val:.1f}%)", key=f"btn_{n}")
+                            else: st.write("N/A")
+                        with c3:
+                            st.write("**Subpages**")
+                            if subpages:
+                                for s in list(set(subpages))[:2]: st.warning(s)
+                            else: st.error("Manual Required")
+                else: st.error("No items found after filtering blacklist.")
+            else: st.error("File needs at least 2 columns.")
+
+    # --- MODULE: ZONE IDENTIFIER ---
+    elif mode == "📍 Zone Identifier":
+        emirate = st.sidebar.radio("Select Emirate:", ["Dubai", "Sharjah", "Ajman", "Ras Al Khaimah", "Umm Al Quwain", "Fujairah"])
+        zones_gdf, matrix_df = load_logistics_data(emirate)
+        st.title(f"📍 {emirate} Community & Delivery Finder")
+        if zones_gdf is not None:
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                coords_raw = st.text_input("Paste Coordinates (Lat, Long)")
+                if coords_raw:
+                    try:
+                        lat, lon = map(float, coords_raw.split(','))
+                        p = Point(lon, lat)
+                        match = zones_gdf[zones_gdf.contains(p)]
+                        if not match.empty:
+                            row = match.iloc[0]
+                            potential_headers = ['CNAME_E', 'name', 'COMM_NAME', 'NAME_EN', 'LABEL']
+                            zone_name = next((str(row[h]).strip() for h in potential_headers if h in match.columns and pd.notna(row[h]) and str(row[h]).lower() != "none"), "Undefined Zone")
+                            st.success(f"🎯 **Zone:** {zone_name}")
+                            st.code(zone_name)
+                            logic_match = matrix_df[matrix_df['Home_Zone'].str.contains(zone_name, case=False, na=False)]
+                            if not logic_match.empty:
+                                st.metric("Eligible Zones", logic_match.iloc[0]['Zone_Count'])
+                                st.info(f"**Delivers To:** {logic_match.iloc[0]['Eligible_Zones']}")
+                        else: st.warning("Outside boundaries.")
+                    except: st.error("Use format: Lat, Long")
+            with col2:
+                centers = {"Dubai": [25.15, 55.3], "Sharjah": [25.35, 55.45], "Ajman": [25.40, 55.50], "Ras Al Khaimah": [25.75, 55.95], "Umm Al Quwain": [25.55, 55.55], "Fujairah": [25.12, 56.32]}
+                m = folium.Map(location=centers.get(emirate, [25.0, 55.0]), zoom_start=11)
+                folium.GeoJson(zones_gdf).add_to(m)
+                st_folium(m, width="100%", height=500)
