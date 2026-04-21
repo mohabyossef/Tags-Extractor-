@@ -119,4 +119,58 @@ if check_password():
         st.title("🏷️ Hobz AI Menu Tagger")
         blacklist, clean_tags = load_tagging_data()
         
-        col1, col2 = st.columns([1,
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            res_name = st.text_input("Restaurant Name")
+            menu_input = st.text_area("Paste Menu Categories (One per line)", height=300)
+            
+        if menu_input:
+            lines = [line.strip() for line in menu_input.split('\n') if line.strip()]
+            main_items = [l for l in lines if not any(b in l.lower() for b in blacklist)]
+            if not main_items: main_items = lines
+            
+            total_main = len(main_items)
+            counts = pd.Series(main_items).value_counts()
+            
+            normal_proposals = []
+            for item, count in counts.items():
+                perc = (count / total_main) * 100
+                if perc >= 30:
+                    matches = [t for t in clean_tags if item.lower() in str(t).lower() and "Subpage" not in str(t)]
+                    if matches:
+                        best_match = min(matches, key=len)
+                        normal_proposals.append(str(best_match))
+
+            cuisine_proposals = []
+            search_text = (res_name + " " + " ".join(main_items)).lower()
+            for t in clean_tags:
+                if "Subpage" not in str(t) and str(t).lower() in search_text:
+                    cuisine_proposals.append(str(t))
+            cuisine_proposals = list(set(cuisine_proposals))
+            cuisine_proposals = [c for c in cuisine_proposals if c not in normal_proposals][:3]
+
+            subpage_proposals = []
+            all_found = [n for n in normal_proposals] + cuisine_proposals
+            for t in clean_tags:
+                if "Subpage" in str(t) and any(word.lower() in str(t).lower() for word in all_found if len(word) > 3):
+                    subpage_proposals.append(str(t))
+
+            with col2:
+                st.subheader("📋 Recommended Tag Profile")
+                st.write("**Mandatory Tags:** `New Restaurant`, `CPlus`")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.write("**Cuisine Tags**")
+                    if cuisine_proposals:
+                        for c in cuisine_proposals: st.write(f"✅ {c}")
+                    else: st.write("N/A")
+                with c2:
+                    st.write("**Normal Tags (Purple)**")
+                    if normal_proposals:
+                        for n in normal_proposals: st.write(f"🟣 {n}")
+                    else: st.write("N/A")
+                with c3:
+                    st.write("**Subpages**")
+                    if subpage_proposals:
+                        for s in list(set(subpage_proposals))[:2]: st.write(f"📄 {s}")
+                    else: st.write("N/A")
