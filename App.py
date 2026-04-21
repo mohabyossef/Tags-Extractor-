@@ -106,6 +106,7 @@ if check_password():
         if upload_file:
             df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
             if len(df.columns) >= 2:
+                # Column 0: Category, Column 1: Item Name
                 df_clean = df[~df.iloc[:, 0].astype(str).str.lower().str.strip().isin(blacklist)].copy()
                 df_clean['merged'] = df_clean.iloc[:, 0].astype(str) + " " + df_clean.iloc[:, 1].astype(str)
                 merged_items = df_clean['merged'].tolist()
@@ -115,8 +116,12 @@ if check_password():
                     item_stats = []
                     for tag in clean_tags:
                         if "Subpage" in str(tag): continue
-                        t_lower = str(tag).lower().strip()
-                        match_count = sum(1 for context in merged_items if t_lower in context.lower())
+                        
+                        # Aggressive Matching: Check if Tag exists as a word in the merged item name
+                        t_search = str(tag).lower().strip()
+                        # This avoids matching parts of words (like 'pie' in 'piece') but matches 'pie' in 'apple pie'
+                        match_count = sum(1 for context in merged_items if re.search(r'\b' + re.escape(t_search) + r'\b', context.lower()))
+                        
                         if match_count > 0:
                             item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                     
@@ -124,10 +129,12 @@ if check_password():
 
                     normal_tags = []
                     if not stats_df.empty:
+                        # Grab ALL tags that cross 30%
                         high_perc = stats_df[stats_df['perc'] >= 30]
                         if not high_perc.empty:
                             normal_tags = high_perc['tag'].tolist()
                         else:
+                            # If nothing hit 30%, show the top 3 highest types
                             normal_tags = stats_df.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     
                     normal_tags = list(set(normal_tags))
@@ -151,22 +158,28 @@ if check_password():
                         c1, c2, c3 = st.columns(3)
                         with c1:
                             st.write("**Cuisine Tags**")
-                            for c in cuisine_tags if cuisine_tags else ["N/A"]: st.success(c)
+                            if cuisine_tags:
+                                for c in cuisine_tags: st.success(c)
+                            else: st.write("N/A")
                         with c2:
                             st.write("**Normal Tags (Purple)**")
                             if normal_tags:
                                 for n in normal_tags:
-                                    if n in stats_df['tag'].values:
-                                        p_val = stats_df[stats_df['tag'] == n]['perc'].values[0]
-                                        st.button(f"{n} ({p_val:.1f}%)", key=f"btn_{n}")
+                                    p_val = stats_df[stats_df['tag'] == n]['perc'].values[0] if n in stats_df['tag'].values else 0
+                                    st.button(f"{n} ({p_val:.1f}%)", key=f"btn_{n}")
                             else: st.write("N/A")
                         with c3:
                             st.write("**Subpages**")
                             if subpages:
                                 for s in list(set(subpages))[:2]: st.warning(s)
                             else: st.error("Manual Required")
-                else: st.error("No items found after filtering blacklist.")
-            else: st.error("File needs at least 2 columns.")
+                            
+                        with st.expander("🔍 Debugging: View Combined Items"):
+                            st.write(merged_items)
+                else:
+                    st.error("Zero items found. Check if your file headers are shifted.")
+            else:
+                st.error("Error: The file must have 'Category' in the 1st column and 'Item Name' in the 2nd.")
 
     # --- MODULE: ZONE IDENTIFIER ---
     elif mode == "📍 Zone Identifier":
