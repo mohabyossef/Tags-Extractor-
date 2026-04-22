@@ -17,13 +17,13 @@ def check_password():
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.title("🔒 Hobz Hub Access")
+        st.title(":lock: Hobz Hub Access")
         st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        st.title("🔒 Hobz Hub Access")
+        st.title(":lock: Hobz Hub Access")
         st.text_input("Enter Password", type="password", on_change=password_entered, key="password")
-        st.error("😕 Password incorrect.")
+        st.error(":confused: Password incorrect.")
         return False
     else:
         return True
@@ -49,20 +49,19 @@ if check_password():
         tags_df = try_read("tags")
         if tags_df is not None:
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
-            # campaign filter: standalone words only [cite: 2, 4, 14]
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
             
         return blacklist, clean_tags
 
     # --- 3. SIDEBAR ---
-    st.sidebar.title("🛠️ Hobz AI Tagger")
+    st.sidebar.title(":hammer_and_wrench: Hobz AI Tagger")
     if st.sidebar.button("Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
 
     # --- MAIN MODULE: MENU TAGGER ---
-    st.title("🏷️ Hobz AI Menu Tagger")
+    st.title(":label: Hobz AI Menu Tagger")
     blacklist, clean_tags = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
@@ -120,21 +119,22 @@ if check_password():
                 
                 normal_tags = list(set(normal_tags))
 
-                # --- FIXED CUISINE LOGIC (AGGRESSIVE MATCHING) ---
+                # --- FIXED CUISINE LOGIC (CHECKS NAME AND MENU) ---
                 cuisine_tags = []
-                # Build context from BOTH Restaurant Name and discovered Normal Tags
-                full_search_context = (res_name + " " + " ".join(normal_tags)).lower()
-                
+                # Scan every tag in the Tag Sheet
                 for t in clean_tags:
-                    # Skip subpages
                     if "Subpage" in str(t): continue
+                    t_lower = str(t).lower()
                     
-                    t_clean = str(t).lower().strip()
-                    # Check if the tag (e.g., 'Russian') exists as a word in the context
-                    if re.search(r'\b' + re.escape(t_clean) + r'\b', full_search_context):
+                    # 1. Check if tag is in Restaurant Name (e.g., "Russian")
+                    name_match = t_lower in res_name.lower()
+                    
+                    # 2. Check if tag hit the 30% threshold in menu
+                    menu_match = any(t_lower == str(nt).lower() for nt in normal_tags)
+                    
+                    if name_match or menu_match:
                         cuisine_tags.append(str(t))
                 
-                # Deduplicate and limit to 3
                 cuisine_tags = list(set(cuisine_tags))[:3]
 
                 # Subpage Logic
@@ -145,19 +145,21 @@ if check_password():
                         subpages.append(str(t))
 
                 with col2:
-                    st.subheader("🏥 Menu Health Check")
+                    st.subheader(":hospital: Menu Health Check")
                     h_col1, h_col2, h_col3 = st.columns(3)
                     h_col1.metric("Items Scanned", final_count)
                     h_col2.metric("Duplicates Cleared", duplicates_removed)
-                    if final_count < 10: h_col3.warning("⚠️ Small Menu")
-                    else: h_col3.success("✅ Data Healthy")
+                    if final_count < 10: h_col3.warning(":warning: Small Menu")
+                    else: h_col3.success(":white_check_mark: Data Healthy")
 
                     st.divider()
+                    
+                    # MANDATORY REMINDER
                     st.warning("ℹ️ Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
 
-                    st.subheader("📋 Audit Results")
+                    st.subheader(":clipboard: Audit Results")
                     if rescued_categories:
-                        st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%).")
+                        st.info(f":bulb: **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%).")
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -178,7 +180,7 @@ if check_password():
                             for s in list(set(subpages))[:3]: st.warning(s)
                         else: st.error("Manual Required")
                         
-                    with st.expander("🔍 Debug View: Item Breakdown"):
+                    with st.expander(":mag: Debug View: Item Breakdown"):
                         if not stats_df.empty:
                             st.write(stats_df.sort_values(by='perc', ascending=False))
                         else:
