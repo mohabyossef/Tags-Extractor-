@@ -34,7 +34,9 @@ if check_password():
     # --- 2. DATA LOADERS ---
     @st.cache_data
     def load_tagging_resources():
-        blacklist, clean_tags = [], []
+        # Added group_map to the return
+        blacklist, clean_tags, group_map = [], [], {}
+        
         def try_read(base_name):
             if os.path.exists(f"{base_name}.csv"):
                 return pd.read_csv(f"{base_name}.csv")
@@ -52,7 +54,17 @@ if check_password():
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
             
-        return blacklist, clean_tags
+        # --- NEW: Load Smart Group Mapping ---
+        group_df = try_read("groups")
+        if group_df is not None:
+            for _, row in group_df.iterrows():
+                trigger = str(row.iloc[0]).strip().lower()
+                parent = str(row.iloc[1]).strip()
+                if trigger not in group_map:
+                    group_map[trigger] = []
+                group_map[trigger].append(parent)
+                
+        return blacklist, clean_tags, group_map
 
     # --- 3. SIDEBAR ---
     st.sidebar.title(":hammer_and_wrench: Hobz AI Tagger")
@@ -62,7 +74,7 @@ if check_password():
 
     # --- MAIN MODULE: MENU TAGGER ---
     st.title(":label: Hobz AI Menu Tagger")
-    blacklist, clean_tags = load_tagging_resources()
+    blacklist, clean_tags, group_map = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -109,9 +121,8 @@ if check_password():
                 # --- DISPLAY LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
-                    high_perc = stats_df[stats_df['perc'] >= 30]
-                    if not high_perc.empty:
-                        normal_tags = high_perc['tag'].tolist()
+                    high_perc = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
+                    normal_tags.extend(high_perc)
                     
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
@@ -119,23 +130,29 @@ if check_password():
                 
                 normal_tags = list(set(normal_tags))
 
-                # --- FIXED CUISINE LOGIC (CHECKS NAME AND MENU) ---
+                # --- CUISINE & SMART GROUP LOGIC ---
                 cuisine_tags = []
-                # Scan every tag in the Tag Sheet
                 for t in clean_tags:
                     if "Subpage" in str(t): continue
                     t_lower = str(t).lower()
                     
-                    # 1. Check if tag is in Restaurant Name (e.g., "Russian")
                     name_match = t_lower in res_name.lower()
-                    
-                    # 2. Check if tag hit the 30% threshold in menu
                     menu_match = any(t_lower == str(nt).lower() for nt in normal_tags)
+                    # Broad check for cuisine terms in item names
+                    keyword_match = any(t_lower in context.lower() for context in merged_items)
                     
-                    if name_match or menu_match:
+                    if name_match or menu_match or keyword_match:
                         cuisine_tags.append(str(t))
+
+                # --- NEW: APPLY GROUP MAPPING (Parent Tags) ---
+                found_parents = []
+                # Check every identified tag to see if it triggers a parent (like Emirati -> Arabic)
+                for tag in (normal_tags + cuisine_tags):
+                    tag_low = str(tag).lower()
+                    if tag_low in group_map:
+                        found_parents.extend(group_map[tag_low])
                 
-                cuisine_tags = list(set(cuisine_tags))[:3]
+                cuisine_tags = list(set(cuisine_tags + found_parents))[:5]
 
                 # Subpage Logic
                 subpages = []
@@ -153,8 +170,6 @@ if check_password():
                     else: h_col3.success(":white_check_mark: Data Healthy")
 
                     st.divider()
-                    
-                    # MANDATORY REMINDER
                     st.warning(":information_source: Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
 
                     st.subheader(":clipboard: Audit Results")
@@ -163,7 +178,7 @@ if check_password():
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.write("**Cuisine Tags**")
+                        st.write("**Cuisine & Groups**")
                         if cuisine_tags:
                             for c in cuisine_tags: st.success(c)
                         else: st.write("N/A")
