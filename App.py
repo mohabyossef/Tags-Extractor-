@@ -31,10 +31,11 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Hobz AI Tagger", layout="wide")
 
-    # --- 2. DATA LOADERS ---
+    # --- 2. DATA LOADERS (Fixed Safety Logic) ---
     @st.cache_data
     def load_tagging_resources():
         blacklist, clean_tags, group_map = [], [], {}
+        
         def try_read(base_name):
             if os.path.exists(f"{base_name}.csv"):
                 return pd.read_csv(f"{base_name}.csv")
@@ -42,16 +43,19 @@ if check_password():
                 return pd.read_excel(f"{base_name}.xlsx")
             return None
 
+        # Process Blacklist
         bl_df = try_read("blacklist")
         if bl_df is not None:
-            blacklist = [str(x).strip().lower() for x in bl_df.iloc[:, 0].dropna()] [cite: 1]
+            blacklist = [str(x).strip().lower() for x in bl_df.iloc[:, 0].dropna()] #
             
+        # Process Tags
         tags_df = try_read("tags")
         if tags_df is not None:
-            all_tags = tags_df.iloc[:, 0].dropna().unique().tolist() [cite: 1]
-            campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b" [cite: 1]
-            clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)] [cite: 1]
+            all_tags = tags_df.iloc[:, 0].dropna().unique().tolist() #
+            campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
+            clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
             
+        # Process Groups
         group_df = try_read("groups")
         if group_df is not None:
             for _, row in group_df.iterrows():
@@ -118,62 +122,4 @@ if check_password():
                     high_perc = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
                     normal_tags.extend(high_perc)
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
-                    top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
-                    normal_tags.extend(top_items)
-                
-                normal_tags = list(set(normal_tags))
-
-                # Cuisine Logic
-                cuisine_tags = []
-                for t in clean_tags:
-                    if "Subpage" in str(t): continue
-                    t_lower = str(t).lower()
-                    if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags) or any(t_lower in context.lower() for context in merged_items):
-                        cuisine_tags.append(str(t))
-
-                # Smart Groups (Parent Mapping)
-                found_parents = []
-                for tag in (normal_tags + cuisine_tags):
-                    tag_low = str(tag).lower()
-                    if tag_low in group_map:
-                        # Fixed indentation here
-                        found_parents.extend(group_map[tag_low])
-                
-                cuisine_tags = list(set(cuisine_tags + found_parents))[:5]
-
-                # Subpage Logic
-                subpages = []
-                refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
-                for t in clean_tags:
-                    if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
-                        subpages.append(str(t))
-
-                with col2:
-                    st.subheader(":hospital: Menu Health Check")
-                    h_col1, h_col2, h_col3 = st.columns(3)
-                    h_col1.metric("Items Scanned", final_count)
-                    h_col2.metric("Duplicates Cleared", duplicates_removed)
-                    if final_count < 10: h_col3.warning(":warning: Small Menu")
-                    else: h_col3.success(":white_check_mark: Data Healthy")
-
-                    st.divider()
-                    st.warning(":information_source: Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
-
-                    st.subheader(":clipboard: Audit Results")
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        st.write("**Cuisine & Groups**")
-                        if cuisine_tags:
-                            for c in cuisine_tags: st.success(c)
-                        else: st.write("N/A")
-                    with c2:
-                        st.write("**Normal Tags**")
-                        if normal_tags:
-                            display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
-                            for _, row in display_df.iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
-                    with c3:
-                        st.write("**Subpages**")
-                        if subpages:
-                            for s in list(set(subpages))[:3]: st.warning(s)
-                        else: st.error("Manual Required")
+                    top_items =
