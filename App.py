@@ -29,34 +29,7 @@ def check_password():
         return True
 
 if check_password():
-    # --- CUSTOM THEME: DARK MODE INJECTION ---
     st.set_page_config(page_title="Hobz AI Tagger", layout="wide")
-    
-    st.markdown("""
-        <style>
-        /* Main background and text colors */
-        .stApp {
-            background-color: #0E1117;
-            color: #FFFFFF;
-        }
-        /* Sidebar styling */
-        [data-testid="stSidebar"] {
-            background-color: #161B22;
-        }
-        /* Input box text color */
-        input {
-            color: #FFFFFF !important;
-        }
-        /* Headings */
-        h1, h2, h3, h4, p, span {
-            color: #FFFFFF !important;
-        }
-        /* Success/Warning message text contrast */
-        .stAlert p {
-            color: #000000 !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
 
     # --- 2. DATA LOADERS ---
     @st.cache_data
@@ -82,7 +55,6 @@ if check_password():
 
     # --- 3. SIDEBAR ---
     st.sidebar.title("🛠️ Hobz AI Tagger")
-    
     if st.sidebar.button("Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
@@ -99,12 +71,17 @@ if check_password():
     if upload_file:
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
-        # --- HEALTH CHECK: REMOVE DUPLICATES ---
-        initial_count = len(df)
-        df = df.drop_duplicates()
-        dupes_removed = initial_count - len(df)
-        
         if len(df.columns) >= 2:
+            # --- 🚀 NEW: HEALTH CHECK & DUPLICATE REMOVAL ---
+            initial_count = len(df)
+            
+            # Remove Nulls and Duplicates
+            df = df.dropna(subset=[df.columns[0], df.columns[1]]) # Remove rows with empty Cat or Item
+            df = df.drop_duplicates() # Remove exact duplicate rows
+            
+            final_count = len(df)
+            duplicates_removed = initial_count - final_count
+
             # --- 40% SMART OVERRIDE LOGIC ---
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
@@ -144,6 +121,7 @@ if check_password():
                 
                 normal_tags = list(set(normal_tags))
 
+                # Cuisine & Subpage Logic
                 cuisine_tags = []
                 context_str = (res_name + " " + " ".join(normal_tags)).lower()
                 for t in clean_tags:
@@ -158,10 +136,19 @@ if check_password():
                         subpages.append(str(t))
 
                 with col2:
-                    st.subheader("📋 Audit Results")
-                    if dupes_removed > 0:
-                        st.write(f"🛡️ **Health Check:** Removed {dupes_removed} duplicate items.")
+                    # Health Check UI
+                    st.subheader("🏥 Menu Health Check")
+                    h_col1, h_col2, h_col3 = st.columns(3)
+                    h_col1.metric("Items Scanned", final_count)
+                    h_col2.metric("Duplicates Cleared", duplicates_removed)
                     
+                    if final_count < 10:
+                        h_col3.warning("⚠️ Small Menu Detected")
+                    else:
+                        h_col3.success("✅ Data Healthy")
+
+                    st.divider()
+                    st.subheader("📋 Audit Results")
                     if rescued_categories:
                         st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%). Blacklist bypassed.")
                     
