@@ -34,8 +34,7 @@ if check_password():
     # --- 2. DATA LOADERS ---
     @st.cache_data
     def load_tagging_resources():
-        blacklist, clean_tags, group_map = [], [], {}
-        
+        blacklist, clean_tags = [], []
         def try_read(base_name):
             if os.path.exists(f"{base_name}.csv"):
                 return pd.read_csv(f"{base_name}.csv")
@@ -43,30 +42,17 @@ if check_password():
                 return pd.read_excel(f"{base_name}.xlsx")
             return None
 
-        # Load Blacklist
         bl_df = try_read("blacklist")
         if bl_df is not None:
             blacklist = [str(x).strip().lower() for x in bl_df.iloc[:, 0].dropna()]
             
-        # Load Main Tags 
         tags_df = try_read("tags")
         if tags_df is not None:
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
             
-        # --- NEW: Load Group Mapping ---
-        group_df = try_read("groups")
-        if group_df is not None:
-            # Create a dictionary where Trigger -> Parent
-            for _, row in group_df.iterrows():
-                trigger = str(row.iloc[0]).strip().lower()
-                parent = str(row.iloc[1]).strip()
-                if trigger not in group_map:
-                    group_map[trigger] = []
-                group_map[trigger].append(parent)
-                
-        return blacklist, clean_tags, group_map
+        return blacklist, clean_tags
 
     # --- 3. SIDEBAR ---
     st.sidebar.title(":hammer_and_wrench: Hobz AI Tagger")
@@ -76,7 +62,7 @@ if check_password():
 
     # --- MAIN MODULE: MENU TAGGER ---
     st.title(":label: Hobz AI Menu Tagger")
-    blacklist, clean_tags, group_map = load_tagging_resources()
+    blacklist, clean_tags = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -87,17 +73,21 @@ if check_password():
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
         if len(df.columns) >= 2:
-            # Health Check & Duplicate Removal
+            # --- HEALTH CHECK & DUPLICATE REMOVAL ---
             initial_count = len(df)
-            df = df.dropna(subset=[df.columns[0], df.columns[1]]).drop_duplicates()
+            df = df.dropna(subset=[df.columns[0], df.columns[1]])
+            df = df.drop_duplicates()
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
-            # 40% Smart Override
+            # --- 40% SMART OVERRIDE LOGIC ---
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
-            rescued_categories = [cat for cat, count in cat_counts.items() if cat in blacklist and (count / original_total) >= 0.40]
+            
+            rescued_categories = [cat for cat, count in cat_counts.items() 
+                                 if cat in blacklist and (count / original_total) >= 0.40]
+            
             active_blacklist = [b for b in blacklist if b not in rescued_categories]
             
             df_clean = df[~cat_series.isin(active_blacklist)].copy()
@@ -116,39 +106,38 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- NORMAL TAGS ---
+                # --- DISPLAY LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
-                    high_perc = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
-                    normal_tags.extend(high_perc)
+                    high_perc = stats_df[stats_df['perc'] >= 30]
+                    if not high_perc.empty:
+                        normal_tags = high_perc['tag'].tolist()
+                    
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
 
-                # --- ENHANCED CUISINE LOGIC (WITH SMART GROUPS) ---
+                # --- FIXED CUISINE LOGIC (CHECKS NAME AND MENU) ---
                 cuisine_tags = []
-                
-                # Check for direct matches in name/menu [cite: 6, 8]
+                # Scan every tag in the Tag Sheet
                 for t in clean_tags:
                     if "Subpage" in str(t): continue
                     t_lower = str(t).lower()
-                    if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags) or any(t_lower in context.lower() for context in merged_items):
+                    
+                    # 1. Check if tag is in Restaurant Name (e.g., "Russian")
+                    name_match = t_lower in res_name.lower()
+                    
+                    # 2. Check if tag hit the 30% threshold in menu
+                    menu_match = any(t_lower == str(nt).lower() for nt in normal_tags)
+                    
+                    if name_match or menu_match:
                         cuisine_tags.append(str(t))
                 
-                # --- NEW: APPLY GROUP MAPPING ---
-                found_parents = []
-                # Check all normal and cuisine tags to see if they trigger a parent 
-                for tag in (normal_tags + cuisine_tags):
-                    tag_low = str(tag).lower()
-                    if tag_low in group_map:
-                        found_parents.extend(group_map[tag_low])
-                
-                # Add parents to the cuisine column
-                cuisine_tags = list(set(cuisine_tags + found_parents))[:5]
+                cuisine_tags = list(set(cuisine_tags))[:3]
 
-                # Subpage Logic 
+                # Subpage Logic
                 subpages = []
                 refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
                 for t in clean_tags:
@@ -164,12 +153,17 @@ if check_password():
                     else: h_col3.success(":white_check_mark: Data Healthy")
 
                     st.divider()
-                    st.warning("ℹ️ Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
+                    
+                    # MANDATORY REMINDER
+                    st.warning(":information_source: Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
 
                     st.subheader(":clipboard: Audit Results")
+                    if rescued_categories:
+                        st.info(f":bulb: **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%).")
+                    
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.write("**Cuisine & Groups**")
+                        st.write("**Cuisine Tags**")
                         if cuisine_tags:
                             for c in cuisine_tags: st.success(c)
                         else: st.write("N/A")
@@ -179,10 +173,19 @@ if check_password():
                             display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
                             for _, row in display_df.iterrows():
                                 st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else: st.write("N/A")
                     with c3:
                         st.write("**Subpages**")
                         if subpages:
                             for s in list(set(subpages))[:3]: st.warning(s)
                         else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View: Item Breakdown"):
+                        if not stats_df.empty:
+                            st.write(stats_df.sort_values(by='perc', ascending=False))
+                        else:
+                            st.write("No matching tags found in Tag Sheet.")
             else:
-                st.error("Zero items found. Check your blacklist.")
+                st.error("Zero items found after filtering. Check your blacklist.")
+        else:
+            st.error("Error: Need at least 2 columns (Category, Item Name).")
