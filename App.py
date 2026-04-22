@@ -108,8 +108,20 @@ if check_password():
         if upload_file:
             df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
             if len(df.columns) >= 2:
-                # Column 0: Category, Column 1: Item Name
-                df_clean = df[~df.iloc[:, 0].astype(str).str.lower().str.strip().isin(blacklist)].copy()
+                # --- NEW 40% SMART OVERRIDE LOGIC ---
+                original_total = len(df)
+                cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
+                cat_counts = cat_series.value_counts()
+                
+                # Find categories in blacklist that represent >= 40% of the entire menu
+                rescued_categories = [cat for cat, count in cat_counts.items() 
+                                     if cat in blacklist and (count / original_total) >= 0.40]
+                
+                # Active blacklist includes entries NOT rescued by the 40% rule
+                active_blacklist = [b for b in blacklist if b not in rescued_categories]
+                
+                # Filter out only items in the active blacklist
+                df_clean = df[~cat_series.isin(active_blacklist)].copy()
                 df_clean['merged'] = df_clean.iloc[:, 0].astype(str) + " " + df_clean.iloc[:, 1].astype(str)
                 merged_items = df_clean['merged'].tolist()
                 total_count = len(merged_items)
@@ -120,8 +132,6 @@ if check_password():
                         if "Subpage" in str(tag): continue
                         
                         t_search = str(tag).lower().strip()
-                        # Plural/Singular Fuzzy logic: Match "Pie" in "Pies" and vice versa
-                        # This checks if the tag word exists inside the item name context
                         match_count = sum(1 for context in merged_items if t_search in context.lower())
                         
                         if match_count > 0:
@@ -138,7 +148,6 @@ if check_password():
                             normal_tags = high_perc['tag'].tolist()
                         
                         # 2. Always include the Top 3 items regardless of percentage 
-                        # This ensures "Pie" shows up if it's high but not quite 30%
                         top_items = stats_df.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                         normal_tags.extend(top_items)
                     
@@ -163,6 +172,10 @@ if check_password():
                     with col2:
                         st.subheader("📋 Audit Results")
                         st.write(f"Analyzed **{total_count}** main items.")
+                        
+                        # Display override notification if any blacklisted items were rescued
+                        if rescued_categories:
+                            st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40% of menu). Blacklist bypassed.")
                         
                         c1, c2, c3 = st.columns(3)
                         with c1:
