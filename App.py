@@ -29,7 +29,34 @@ def check_password():
         return True
 
 if check_password():
+    # --- CUSTOM THEME: DARK MODE INJECTION ---
     st.set_page_config(page_title="Hobz AI Tagger", layout="wide")
+    
+    st.markdown("""
+        <style>
+        /* Main background and text colors */
+        .stApp {
+            background-color: #0E1117;
+            color: #FFFFFF;
+        }
+        /* Sidebar styling */
+        [data-testid="stSidebar"] {
+            background-color: #161B22;
+        }
+        /* Input box text color */
+        input {
+            color: #FFFFFF !important;
+        }
+        /* Headings */
+        h1, h2, h3, h4, p, span {
+            color: #FFFFFF !important;
+        }
+        /* Success/Warning message text contrast */
+        .stAlert p {
+            color: #000000 !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
     # --- 2. DATA LOADERS ---
     @st.cache_data
@@ -53,7 +80,7 @@ if check_password():
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
         return blacklist, clean_tags
 
-    # --- 3. SIDEBAR (Cleaned) ---
+    # --- 3. SIDEBAR ---
     st.sidebar.title("🛠️ Hobz AI Tagger")
     
     if st.sidebar.button("Logout"):
@@ -71,17 +98,21 @@ if check_password():
         
     if upload_file:
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
+        
+        # --- HEALTH CHECK: REMOVE DUPLICATES ---
+        initial_count = len(df)
+        df = df.drop_duplicates()
+        dupes_removed = initial_count - len(df)
+        
         if len(df.columns) >= 2:
             # --- 40% SMART OVERRIDE LOGIC ---
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
             
-            # Find blacklisted categories that represent >= 40% of the entire menu
             rescued_categories = [cat for cat, count in cat_counts.items() 
                                  if cat in blacklist and (count / original_total) >= 0.40]
             
-            # Filter: Block blacklist UNLESS it was rescued by the 40% rule
             active_blacklist = [b for b in blacklist if b not in rescued_categories]
             
             df_clean = df[~cat_series.isin(active_blacklist)].copy()
@@ -93,10 +124,8 @@ if check_password():
                 item_stats = []
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
-                    
                     t_search = str(tag).lower().strip()
                     match_count = sum(1 for context in merged_items if t_search in context.lower())
-                    
                     if match_count > 0:
                         item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                 
@@ -105,19 +134,16 @@ if check_password():
                 # --- DISPLAY LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
-                    # 1. Tags crossing 30%
                     high_perc = stats_df[stats_df['perc'] >= 30]
                     if not high_perc.empty:
                         normal_tags = high_perc['tag'].tolist()
                     
-                    # 2. Top 3 items regardless of percentage (filtered by blacklist)
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
 
-                # Cuisine Logic
                 cuisine_tags = []
                 context_str = (res_name + " " + " ".join(normal_tags)).lower()
                 for t in clean_tags:
@@ -125,7 +151,6 @@ if check_password():
                         cuisine_tags.append(str(t))
                 cuisine_tags = list(set(cuisine_tags))[:3]
 
-                # Subpage Logic
                 subpages = []
                 refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
                 for t in clean_tags:
@@ -134,6 +159,9 @@ if check_password():
 
                 with col2:
                     st.subheader("📋 Audit Results")
+                    if dupes_removed > 0:
+                        st.write(f"🛡️ **Health Check:** Removed {dupes_removed} duplicate items.")
+                    
                     if rescued_categories:
                         st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%). Blacklist bypassed.")
                     
