@@ -49,8 +49,6 @@ if check_password():
         tags_df = try_read("tags")
         if tags_df is not None:
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
-            
-            # FIXED REGEX: Added \b (word boundaries) so 'off' doesn't kill 'Coffee'
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
             
@@ -101,11 +99,8 @@ if check_password():
                 item_stats = []
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
-                    
                     t_search = str(tag).lower().strip()
-                    # We use a standard contains check for food items
                     match_count = sum(1 for context in merged_items if t_search in context.lower())
-                    
                     if match_count > 0:
                         item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                 
@@ -114,24 +109,32 @@ if check_password():
                 # --- DISPLAY LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
-                    # 1. Tags crossing 30%
                     high_perc = stats_df[stats_df['perc'] >= 30]
                     if not high_perc.empty:
                         normal_tags = high_perc['tag'].tolist()
                     
-                    # 2. Top 3 items regardless of percentage (filtered by active blacklist)
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
 
-                # Cuisine Logic
+                # --- FIXED CUISINE LOGIC (CHECKS NAME AND MENU) ---
                 cuisine_tags = []
-                context_str = (res_name + " " + " ".join(normal_tags)).lower()
+                # Scan every tag in the Tag Sheet
                 for t in clean_tags:
-                    if "Subpage" not in str(t) and str(t).lower() in context_str:
+                    if "Subpage" in str(t): continue
+                    t_lower = str(t).lower()
+                    
+                    # 1. Check if tag is in Restaurant Name (e.g., "Russian")
+                    name_match = t_lower in res_name.lower()
+                    
+                    # 2. Check if tag hit the 30% threshold in menu
+                    menu_match = any(t_lower == str(nt).lower() for nt in normal_tags)
+                    
+                    if name_match or menu_match:
                         cuisine_tags.append(str(t))
+                
                 cuisine_tags = list(set(cuisine_tags))[:3]
 
                 # Subpage Logic
@@ -150,6 +153,10 @@ if check_password():
                     else: h_col3.success(":white_check_mark: Data Healthy")
 
                     st.divider()
+                    
+                    # MANDATORY REMINDER
+                    st.warning(":information_source: Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
+
                     st.subheader(":clipboard: Audit Results")
                     if rescued_categories:
                         st.info(f":bulb: **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%).")
