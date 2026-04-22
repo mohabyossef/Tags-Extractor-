@@ -49,8 +49,11 @@ if check_password():
         tags_df = try_read("tags")
         if tags_df is not None:
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
-            campaign_regex = r"%|off|sale|sar|jod|deal|offer|discount|promo"
+            
+            # FIXED REGEX: Added \b (word boundaries) so 'off' doesn't kill 'Coffee'
+            campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
+            
         return blacklist, clean_tags
 
     # --- 3. SIDEBAR ---
@@ -60,7 +63,7 @@ if check_password():
         st.rerun()
 
     # --- MAIN MODULE: MENU TAGGER ---
-    st.title("🏷️ Hobz Menu Tagger")
+    st.title("🏷️ Hobz AI Menu Tagger")
     blacklist, clean_tags = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
@@ -72,13 +75,10 @@ if check_password():
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
         if len(df.columns) >= 2:
-            # --- 🚀 NEW: HEALTH CHECK & DUPLICATE REMOVAL ---
+            # --- HEALTH CHECK & DUPLICATE REMOVAL ---
             initial_count = len(df)
-            
-            # Remove Nulls and Duplicates
-            df = df.dropna(subset=[df.columns[0], df.columns[1]]) # Remove rows with empty Cat or Item
-            df = df.drop_duplicates() # Remove exact duplicate rows
-            
+            df = df.dropna(subset=[df.columns[0], df.columns[1]])
+            df = df.drop_duplicates()
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
@@ -101,8 +101,11 @@ if check_password():
                 item_stats = []
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
+                    
                     t_search = str(tag).lower().strip()
+                    # We use a standard contains check for food items
                     match_count = sum(1 for context in merged_items if t_search in context.lower())
+                    
                     if match_count > 0:
                         item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                 
@@ -111,17 +114,19 @@ if check_password():
                 # --- DISPLAY LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
+                    # 1. Tags crossing 30%
                     high_perc = stats_df[stats_df['perc'] >= 30]
                     if not high_perc.empty:
                         normal_tags = high_perc['tag'].tolist()
                     
+                    # 2. Top 3 items regardless of percentage (filtered by active blacklist)
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
 
-                # Cuisine & Subpage Logic
+                # Cuisine Logic
                 cuisine_tags = []
                 context_str = (res_name + " " + " ".join(normal_tags)).lower()
                 for t in clean_tags:
@@ -129,6 +134,7 @@ if check_password():
                         cuisine_tags.append(str(t))
                 cuisine_tags = list(set(cuisine_tags))[:3]
 
+                # Subpage Logic
                 subpages = []
                 refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
                 for t in clean_tags:
@@ -136,21 +142,17 @@ if check_password():
                         subpages.append(str(t))
 
                 with col2:
-                    # Health Check UI
                     st.subheader("🏥 Menu Health Check")
                     h_col1, h_col2, h_col3 = st.columns(3)
                     h_col1.metric("Items Scanned", final_count)
                     h_col2.metric("Duplicates Cleared", duplicates_removed)
-                    
-                    if final_count < 10:
-                        h_col3.warning("⚠️ Small Menu Detected")
-                    else:
-                        h_col3.success("✅ Data Healthy")
+                    if final_count < 10: h_col3.warning("⚠️ Small Menu")
+                    else: h_col3.success("✅ Data Healthy")
 
                     st.divider()
                     st.subheader("📋 Audit Results")
                     if rescued_categories:
-                        st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%). Blacklist bypassed.")
+                        st.info(f"💡 **Identity Override:** '{', '.join(rescued_categories)}' detected as main identity (>40%).")
                     
                     c1, c2, c3 = st.columns(3)
                     with c1:
@@ -159,7 +161,7 @@ if check_password():
                             for c in cuisine_tags: st.success(c)
                         else: st.write("N/A")
                     with c2:
-                        st.write("**Normal Tags (All Matches)**")
+                        st.write("**Normal Tags**")
                         if normal_tags:
                             display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
                             for _, row in display_df.iterrows():
@@ -172,8 +174,11 @@ if check_password():
                         else: st.error("Manual Required")
                         
                     with st.expander("🔍 Debug View: Item Breakdown"):
-                        st.write(stats_df.sort_values(by='perc', ascending=False))
+                        if not stats_df.empty:
+                            st.write(stats_df.sort_values(by='perc', ascending=False))
+                        else:
+                            st.write("No matching tags found in Tag Sheet.")
             else:
-                st.error("Zero items found after blacklist. Check your file columns.")
+                st.error("Zero items found after filtering. Check your blacklist.")
         else:
-            st.error("Error: Need 'Category' and 'Item Name' columns.")
+            st.error("Error: Need at least 2 columns (Category, Item Name).")
