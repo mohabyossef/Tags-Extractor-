@@ -34,8 +34,7 @@ if check_password():
     # --- 2. DATA LOADERS ---
     @st.cache_data
     def load_tagging_resources():
-        blacklist, clean_tags, trigger_groups = [], [], {}
-        
+        blacklist, clean_tags, trigger_rules = [], [], {}
         def try_read(base_name):
             if os.path.exists(f"{base_name}.csv"):
                 return pd.read_csv(f"{base_name}.csv")
@@ -43,30 +42,27 @@ if check_password():
                 return pd.read_excel(f"{base_name}.xlsx")
             return None
 
-        # Load Blacklist
         bl_df = try_read("blacklist")
         if bl_df is not None:
             blacklist = [str(x).strip().lower() for x in bl_df.iloc[:, 0].dropna()]
             
-        # Load Tags
         tags_df = try_read("tags")
         if tags_df is not None:
             all_tags = tags_df.iloc[:, 0].dropna().unique().tolist()
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
+        
+        # NEW: Load Trigger Logic Mapping (Col A: Constituent, Col B: Group/Triggered Tag)
+        logic_df = try_read("trigger_logic")
+        if logic_df is not None:
+            for _, row in logic_df.iterrows():
+                constituent = str(row.iloc[0]).strip().lower()
+                group_tag = str(row.iloc[1]).strip()
+                if group_tag not in trigger_rules:
+                    trigger_rules[group_tag] = []
+                trigger_rules[group_tag].append(constituent)
             
-        # --- NEW: Load Trigger Groups Mapping ---
-        # File structure: Column 0 = Group Name (Asian), Column 1 = Member Tag (Ramen)
-        group_df = try_read("trigger_groups")
-        if group_df is not None:
-            for _, row in group_df.iterrows():
-                group_name = str(row.iloc[0]).strip()
-                member_tag = str(row.iloc[1]).strip().lower()
-                if group_name not in trigger_groups:
-                    trigger_groups[group_name] = []
-                trigger_groups[group_name].append(member_tag)
-                
-        return blacklist, clean_tags, trigger_groups
+        return blacklist, clean_tags, trigger_rules
 
     # --- 3. SIDEBAR ---
     st.sidebar.title(":hammer_and_wrench: Hobz AI Tagger")
@@ -76,7 +72,7 @@ if check_password():
 
     # --- MAIN MODULE ---
     st.title(":label: Hobz AI Menu Tagger")
-    blacklist, clean_tags, trigger_groups = load_tagging_resources()
+    blacklist, clean_tags, trigger_rules = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
     with col1:
@@ -87,13 +83,13 @@ if check_password():
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
         if len(df.columns) >= 2:
-            # Cleanup
+            # Cleanup & Duplicate Removal
             initial_count = len(df)
             df = df.dropna(subset=[df.columns[0], df.columns[1]]).drop_duplicates()
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
-            # Smart Override Logic
+            # 40% Smart Override
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
@@ -106,50 +102,57 @@ if check_password():
             total_count = len(merged_items)
 
             if total_count > 0:
-                item_stats = {} # Use dict for faster lookup
+                # 1. Calculate Individual Tag Stats
+                item_stats = []
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
                     t_search = str(tag).lower().strip()
                     match_count = sum(1 for context in merged_items if t_search in context.lower())
                     if match_count > 0:
-                        item_stats[tag] = (match_count / total_count) * 100
+                        item_stats.append({"tag": tag, "perc": (match_count / total_count) * 100})
                 
-                # Convert back to DataFrame for display
-                stats_df = pd.DataFrame([{"tag": k, "perc": v} for k, v in item_stats.items()])
+                stats_df = pd.DataFrame(item_stats)
 
-                # Normal Tags (Purple Buttons)
+                # 2. Process Group Trigger Logic (Ramen + Noodles = Asian > 30%)
+                group_results = []
+                for group_tag, constituents in trigger_rules.items():
+                    # Priority 1: Check if Group Name or any Constituent is in Restaurant Name
+                    name_priority = (group_tag.lower() in res_name.lower()) or any(c in res_name.lower() for c in constituents)
+                    
+                    # Priority 2: Check Menu Percentages
+                    group_perc = 0
+                    if not stats_df.empty:
+                        # Sum up percentages of all constituent tags found in menu
+                        group_perc = stats_df[stats_df['tag'].str.lower().isin(constituents)]['perc'].sum()
+                    
+                    if name_priority or group_perc >= 30:
+                        group_results.append({"tag": group_tag, "perc": group_perc, "forced": name_priority})
+
+                # 3. Compile Final Tag Lists
                 normal_tags = []
+                # Add tags that hit 30% individually
                 if not stats_df.empty:
-                    high_perc = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
-                    normal_tags.extend(high_perc)
-                    fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
-                    top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
-                    normal_tags.extend(top_items)
+                    normal_tags.extend(stats_df[stats_df['perc'] >= 30]['tag'].tolist())
+                    # Add Top 3 Fallback (if not blacklisted)
+                    fallback = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
+                    normal_tags.extend(fallback.sort_values(by='perc', ascending=False).head(3)['tag'].tolist())
                 
+                # Add Group-Triggered tags to Normal tags
+                normal_tags.extend([g['tag'] for g in group_results])
                 normal_tags = list(set(normal_tags))
 
-                # --- CUISINE & COMBINED GROUP LOGIC ---
+                # 4. Cuisine Tags (Priority to Groups and Name matches)
                 cuisine_tags = []
-                
-                # 1. Direct tag identification (Name/Threshold/Keyword)
                 for t in clean_tags:
                     if "Subpage" in str(t): continue
-                    t_lower = str(t).lower()
-                    if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags) or any(t_lower in context.lower() for context in merged_items):
-                        cuisine_tags.append(str(t))
-
-                # 2. COMBINED GROUP TRIGGER (The 30% Logic)
-                # This checks if the SUM of tags in a group hits 30%
-                for group_name, members in trigger_groups.items():
-                    combined_perc = sum(item_stats.get(m_tag, 0) for m_tag in members if any(m_tag == k.lower() for k in item_stats.keys()))
-                    
-                    # Also check if the group name appears in the restaurant name
-                    if combined_perc >= 30 or group_name.lower() in res_name.lower():
-                        cuisine_tags.append(group_name)
+                    t_low = t.lower()
+                    # Trigger if in name, if in triggered groups, or if individually strong
+                    if (t_low in res_name.lower()) or any(t_low == g['tag'].lower() for g in group_results) or any(t_low == str(nt).lower() for nt in normal_tags):
+                        cuisine_tags.append(t)
                 
                 cuisine_tags = list(set(cuisine_tags))[:5]
 
-                # Subpage Logic
+                # 5. Subpage Logic
                 subpages = []
                 refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
                 for t in clean_tags:
@@ -161,30 +164,30 @@ if check_password():
                     h_col1, h_col2, h_col3 = st.columns(3)
                     h_col1.metric("Items Scanned", final_count)
                     h_col2.metric("Duplicates Cleared", duplicates_removed)
-                    if final_count < 10: h_col3.warning(":warning: Small Menu")
-                    else: h_col3.success(":white_check_mark: Data Healthy")
-
                     st.divider()
-                    st.warning(":information_source: Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
+                    st.warning("ℹ️ Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
 
                     st.subheader(":clipboard: Audit Results")
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.write("**Cuisine & Groups**")
-                        if cuisine_tags:
-                            for c in cuisine_tags: st.success(c)
-                        else: st.write("N/A")
+                        st.write("**Cuisine Tags**")
+                        for c in cuisine_tags if cuisine_tags else ["N/A"]: st.success(c)
                     with c2:
                         st.write("**Normal Tags**")
                         if normal_tags:
-                            display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
-                            for _, row in display_df.iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                            # Display with calculated group/individual percentages
+                            for nt in normal_tags:
+                                # Find perc from stats or groups
+                                p = 0
+                                if not stats_df.empty and nt in stats_df['tag'].values:
+                                    p = stats_df[stats_df['tag'] == nt]['perc'].values[0]
+                                else:
+                                    # Check if it was a group tag
+                                    matched_group = next((g for g in group_results if g['tag'] == nt), None)
+                                    p = matched_group['perc'] if matched_group else 0
+                                st.button(f"{nt} ({p:.1f}%)", key=f"btn_{nt}")
                     with c3:
                         st.write("**Subpages**")
-                        if subpages:
-                            for s in list(set(subpages))[:3]: st.warning(s)
-                        else: st.error("Manual Required")
-                        
-                    with st.expander(":mag: Debug View"):
-                        st.write(stats_df.sort_values(by='perc', ascending=False))
+                        for s in list(set(subpages))[:3] if subpages else ["N/A"]: st.warning(s)
+            else:
+                st.error("Zero items found after filtering.")
