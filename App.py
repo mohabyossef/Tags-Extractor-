@@ -200,4 +200,17 @@ if check_password():
                             if p == 0 and nt in cuisine_map:
                                 p = sum(tag_perc_lookup.get(tr, 0) for tr in cuisine_map[nt])
                             
-                            display_data.append({"tag":
+                            display_data.append({"tag": nt, "perc": p})
+                        
+                        if display_data:
+                            display_df = pd.DataFrame(display_data).sort_values(by='perc', ascending=False)
+                            for _, row in display_df.iterrows():
+                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else:
+                            st.write("N/A")
+
+                    with c3:
+                        st.write("**Subpages**")
+                        if subpages:
+                            for s in list(set(subpages))[:3]: st.warning(s)
+                        else: st.error("Manual Required")
