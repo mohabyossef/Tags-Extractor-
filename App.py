@@ -100,8 +100,8 @@ if check_password():
             total_count = len(merged_items)
 
             if total_count > 0:
-                item_stats = []
                 tag_perc_lookup = {}
+                item_stats = []
                 
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
@@ -114,56 +114,57 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- UNRESTRICTED PRIORITY & COMBINED LOGIC ---
-                final_cuisine_set = set()
-                final_normal_set = set()
+                # --- COMBINED LOGIC (Sets to prevent fighting) ---
+                cuisine_tags_set = set()
+                normal_tags_set = set()
                 forced_percs = {}
 
-                # 1. PRIORITY: Restaurant Name Match (Master Tags & Groups)
+                # 1. PRIORITY: Restaurant Name Match
                 if res_name:
-                    name_low = res_name.lower()
+                    res_name_low = res_name.lower()
                     for t in clean_tags:
-                        if t.lower() in name_low:
-                            final_cuisine_set.add(t)
-                            final_normal_set.add(t)
+                        if t.lower() in res_name_low:
+                            cuisine_tags_set.add(t)
+                            normal_tags_set.add(t)
                             forced_percs[t] = 100.0
                     for target, triggers in cuisine_map.items():
-                        if target.lower() in name_low or any(trig in name_low for trig in triggers):
-                            final_cuisine_set.add(target)
-                            final_normal_set.add(target)
+                        if target.lower() in res_name_low or any(trig in res_name_low for trig in triggers):
+                            cuisine_tags_set.add(target)
+                            normal_tags_set.add(target)
                             forced_percs[target] = 100.0
 
-                # 2. MENU AGGREGATION (Combined triggers >= 30%)
+                # 2. AGGREGATE LOGIC: Menu Threshold (30%)
                 for target, triggers in cuisine_map.items():
                     combined_p = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_p >= 30:
-                        final_cuisine_set.add(target)
-                        final_normal_set.add(target)
-                        if target not in forced_percs: forced_percs[target] = combined_p
+                        cuisine_tags_set.add(target)
+                        normal_tags_set.add(target)
+                        if target not in forced_percs:
+                            forced_percs[target] = combined_p
 
-                # 3. INDIVIDUAL ELIGIBILITY (30% threshold)
+                # 3. INDIVIDUAL ELIGIBILITY (30%)
                 if not stats_df.empty:
                     menu_hits = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
                     for mh in menu_hits:
-                        final_normal_set.add(mh)
-                        if mh.lower() in [t.lower() for t in clean_tags]:
-                            final_cuisine_set.add(mh)
+                        normal_tags_set.add(mh)
+                        if mh.lower() in [ct.lower() for ct in clean_tags]:
+                            cuisine_tags_set.add(mh)
 
-                # 4. FALLBACK: Top 3 Diversity
+                # 4. FALLBACK: Top 3
                 fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                 top_3 = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                 for t in top_3:
-                    final_normal_set.add(t)
+                    normal_tags_set.add(t)
 
-                # Final list building with 5 tag limit for Cuisine
-                cuisine_tags = sorted(list(final_cuisine_set))[:5]
-                normal_tags = list(final_normal_set)
+                # Limit results to 5 as requested
+                cuisine_tags = sorted(list(cuisine_tags_set))[:5]
+                normal_tags = list(normal_tags_set)
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
                     h_col1, h_col2, h_col3 = st.columns(3)
                     h_col1.metric("Items Scanned", final_count)
-                    h_col2.metric("Filtered Audit", total_count)
+                    h_col2.metric("Duplicates Cleared", duplicates_removed)
                     if final_count < 10: h_col3.warning(":warning: Small Menu")
                     else: h_col3.success(":white_check_mark: Data Healthy")
 
@@ -199,3 +200,6 @@ if check_password():
                         if subpages:
                             for s in sorted(list(set(subpages)))[:4]: st.warning(s)
                         else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View"):
+                        st.write(stats_df.sort_values(by='perc', ascending=False))
