@@ -62,7 +62,7 @@ if check_password():
                     if target not in cuisine_map: cuisine_map[target] = []
                     cuisine_map[target].append(trigger)
 
-        # --- NEW: GROUP MAPPING LOADER ---
+        # --- GROUP MAPPING LOADER ---
         group_df = try_read("group_mapping")
         if group_df is not None:
             for _, row in group_df.iterrows():
@@ -163,20 +163,29 @@ if check_password():
                         cuisine_tags.append(str(t))
 
                 # --- FINAL LOGIC: GROUP AGGREGATION ---
-                # This triggers group tags if a member tag is in the final cuisine list
-                current_results = [c.lower() for c in cuisine_tags]
+                current_results_lower = [c.lower() for c in cuisine_tags]
                 for group_name, members in group_map.items():
-                    if any(m in current_results for m in members):
+                    if any(m in current_results_lower for m in members):
                         cuisine_tags.append(group_name)
 
-                cuisine_tags = list(set(cuisine_tags))[:5]
+                # --- FINAL CUISINE LIST (The "Final View") ---
+                final_cuisine_results = list(set(cuisine_tags))[:5]
 
-                # Subpage Logic
+                # --- UPDATED SUBPAGE LOGIC ---
+                # Now only checks against the Final Cuisine Results
                 subpages = []
-                refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
+                final_cuisine_lower = [str(x).lower() for x in final_cuisine_results]
+                
                 for t in clean_tags:
-                    if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
-                        subpages.append(str(t))
+                    tag_str = str(t)
+                    if "Subpage" in tag_str:
+                        # Extract the root name from the tag (e.g., "Burger" from "Burger Subpage")
+                        # This assumes the format "Name Subpage" or similar
+                        root_subpage = tag_str.replace("Subpage", "").strip().lower()
+                        
+                        # Match if the subpage root exists within any of the final cuisine tags
+                        if any(root_subpage in cuisine for cuisine in final_cuisine_lower if len(root_subpage) > 2):
+                            subpages.append(tag_str)
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
@@ -193,8 +202,8 @@ if check_password():
                     c1, c2, c3 = st.columns(3)
                     with c1:
                         st.write("**Cuisine Tags**")
-                        if cuisine_tags:
-                            for c in cuisine_tags: st.success(c)
+                        if final_cuisine_results:
+                            for c in final_cuisine_results: st.success(c)
                         else: st.write("N/A")
                     with c2:
                         st.write("**Normal Tags**")
@@ -212,6 +221,7 @@ if check_password():
                     with c3:
                         st.write("**Subpages**")
                         if subpages:
+                            # Limited to top 3 unique matches
                             for s in list(set(subpages))[:3]: st.warning(s)
                         else: st.error("Manual Required")
                         
