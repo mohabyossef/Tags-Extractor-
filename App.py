@@ -52,14 +52,12 @@ if check_password():
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
         
-        # --- CUISINE MAPPING LOADER ---
         mapping_df = try_read("cuisine_mapping")
         if mapping_df is not None:
             for _, row in mapping_df.iterrows():
                 if pd.notna(row.iloc[0]) and pd.notna(row.iloc[1]):
                     trigger = str(row.iloc[0]).strip().lower()
                     target = str(row.iloc[1]).strip()
-                    # We store it so one target can have multiple triggers
                     if target not in cuisine_map:
                         cuisine_map[target] = []
                     cuisine_map[target].append(trigger)
@@ -91,7 +89,7 @@ if check_password():
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
-            # 40% Smart Override Logic
+            # 40% Smart Override
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
@@ -104,9 +102,8 @@ if check_password():
             total_count = len(merged_items)
 
             if total_count > 0:
-                item_stats = []
-                # Dictionary to store tag -> perc for easy lookup in aggregation
                 tag_perc_lookup = {}
+                item_stats = []
                 
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
@@ -121,58 +118,45 @@ if check_password():
 
                 # --- CUISINE & AGGREGATE LOGIC ---
                 cuisine_tags = []
+                forced_tags_from_name = []
+
+                # NEW: Instant Trigger from Restaurant Name
+                for t in clean_tags:
+                    if str(t).lower() in res_name.lower():
+                        cuisine_tags.append(str(t))
+                        forced_tags_from_name.append(str(t))
+
+                # Check Mapping/Aggregation Triggers
                 additional_normal_tags = []
-
-                # Check Restaurant Name Priority
                 for target, triggers in cuisine_map.items():
-                    if target.lower() in res_name.lower():
+                    # Check Name for Mapping triggers
+                    if target.lower() in res_name.lower() or any(trig in res_name.lower() for trig in triggers):
                         cuisine_tags.append(target)
-                    for trig in triggers:
-                        if trig in res_name.lower():
-                            cuisine_tags.append(target)
+                        if target not in forced_tags_from_name:
+                            forced_tags_from_name.append(target)
 
-                # Check Aggregate Percentages (The Ramen + Noodles Logic)
-                for target, triggers in cuisine_map.items():
-                    combined_perc = 0
-                    for trig in triggers:
-                        combined_perc += tag_perc_lookup.get(trig, 0)
-                    
+                    # Combined Percentage Logic (Ramen + Noodles)
+                    combined_perc = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_perc >= 30:
                         cuisine_tags.append(target)
-                        # Also add it as a normal tag since it passed the menu threshold
-                        additional_normal_tags.append(target)
+                        additional_normal_tags.append({"tag": target, "perc": combined_perc})
 
                 # Display Logic for Normal Tags
                 normal_tags = []
                 if not stats_df.empty:
-                    # 1. Tags crossing 30% individually
+                    # 1. 30% individually
                     normal_tags = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
-                    
-                    # 2. Add the Parent Tags that were triggered by aggregation
-                    normal_tags.extend(additional_normal_tags)
-
-                    # 3. Fallback Top 3
+                    # 2. Aggregated Parents
+                    normal_tags.extend([d['tag'] for d in additional_normal_tags])
+                    # 3. NAME TRIGGERS (FORCED)
+                    normal_tags.extend(forced_tags_from_name)
+                    # 4. Fallback Top 3
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
-
-                # Standard Cuisine check (Direct word match in name/menu)
-                for t in clean_tags:
-                    if "Subpage" in str(t): continue
-                    t_lower = str(t).lower()
-                    if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags):
-                        cuisine_tags.append(str(t))
-
-                cuisine_tags = list(set(cuisine_tags))[:4]
-
-                # Subpage Logic
-                subpages = []
-                refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
-                for t in clean_tags:
-                    if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
-                        subpages.append(str(t))
+                cuisine_tags = list(set(cuisine_tags))
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
@@ -190,28 +174,30 @@ if check_password():
                     with c1:
                         st.write("**Cuisine Tags**")
                         if cuisine_tags:
-                            for c in cuisine_tags: st.success(c)
+                            for c in sorted(cuisine_tags): st.success(c)
                         else: st.write("N/A")
                     with c2:
                         st.write("**Normal Tags**")
-                        if normal_tags:
-                            display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
-                            # Add parent tags to display df for button generation if they aren't there
-                            for add_t in additional_normal_tags:
-                                if add_t not in display_df['tag'].values:
-                                    # Calculate their aggregate percentage for the button label
-                                    trigs = cuisine_map.get(add_t, [])
-                                    agg_p = sum(tag_perc_lookup.get(tr, 0) for tr in trigs)
-                                    new_row = pd.DataFrame([{"tag": add_t, "perc": agg_p}])
-                                    display_df = pd.concat([display_df, new_row])
-                            
+                        display_df = stats_df[stats_df['tag'].isin(normal_tags)].copy()
+                        
+                        # Ensure forced tags from name show up with 100% or their aggregate score
+                        for ft in forced_tags_from_name:
+                            if ft not in display_df['tag'].values:
+                                display_df = pd.concat([display_df, pd.DataFrame([{"tag": ft, "perc": 100.0}])])
+                        for ant in additional_normal_tags:
+                            if ant['tag'] not in display_df['tag'].values:
+                                display_df = pd.concat([display_df, pd.DataFrame([ant])])
+                        
+                        if not display_df.empty:
                             for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
                                 st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
                     with c3:
+                        subpages = []
+                        refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
+                        for t in clean_tags:
+                            if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
+                                subpages.append(str(t))
                         st.write("**Subpages**")
                         if subpages:
-                            for s in list(set(subpages))[:3]: st.warning(s)
+                            for s in sorted(list(set(subpages)))[:5]: st.warning(s)
                         else: st.error("Manual Required")
-                        
-                    with st.expander(":mag: Debug View: Item Breakdown"):
-                        st.write(stats_df.sort_values(by='perc', ascending=False))
