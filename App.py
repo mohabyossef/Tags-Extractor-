@@ -340,14 +340,24 @@ if check_password():
 
                 subpages = []
 
-                refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
+               # Instead of using all normal tags, we only use Cuisines 
+# or very high-ranking Normal tags to find Subpages.
+primary_refs = [str(x).lower() for x in cuisine_tags] 
 
-                for t in clean_tags:
+for t in clean_tags:
+    if "Subpage" in str(t):
+        t_low = str(t).lower()
+        # Check if the subpage name matches one of our primary cuisines
+        if any(ref in t_low for ref in primary_refs if len(ref) > 3):
+            subpages.append(str(t))
 
-                    if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
-
-                        subpages.append(str(t))
-
+st.write("**Subpages (Cuisine Related)**")
+if subpages:
+    # Remove sorting to keep them based on cuisine priority
+    for s in list(set(subpages))[:3]: 
+        st.warning(s)
+else:
+    st.error("Manual Required")
 
 
                 with col2:
