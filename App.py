@@ -153,8 +153,7 @@ if check_password():
 
                 cuisine_tags = list(set(cuisine_tags))[:5]
 
-                # --- REFINED SUBPAGE LOGIC ---
-                # Only look at tags with very high confidence (Cuisine or >40%)
+                # --- REFINED SUBPAGE LOGIC (Reverted to 3 limit) ---
                 subpages = []
                 high_accuracy_refs = [str(c).lower() for c in cuisine_tags]
                 
@@ -167,13 +166,12 @@ if check_password():
                 for t in clean_tags:
                     t_str = str(t)
                     if "Subpage" in t_str:
-                        # Clean tag for matching (e.g., "Subpage - Sushi" -> "sushi")
                         t_clean = t_str.replace("Subpage", "").replace("-", "").strip().lower()
                         if any(ref == t_clean or ref in t_clean for ref in high_accuracy_refs):
                             subpages.append(t_str)
                 
-                # Take only the top match for primary identity
-                subpages = sorted(list(set(subpages)))[:1]
+                # Reverted limit to 3 tags
+                subpages = sorted(list(set(subpages)))[:3]
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
@@ -196,10 +194,7 @@ if check_password():
                     with c2:
                         st.write("**Normal Tags**")
                         if normal_tags:
-                            # Filter stats_df to show only normal_tags
                             display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
-                            
-                            # Ensure additional parent tags are included in display
                             for add_t in additional_normal_tags:
                                 if add_t not in display_df['tag'].values:
                                     trigs = cuisine_map.get(add_t, [])
@@ -214,6 +209,7 @@ if check_password():
                     with c3:
                         st.write("**Subpages**")
                         if subpages:
+                            # Showing up to 3 subpages
                             for s in subpages: st.warning(s)
                         else: st.error("Manual Required")
                         
