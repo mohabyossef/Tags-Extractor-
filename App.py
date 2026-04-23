@@ -662,7 +662,7 @@ if check_password():
 
 
 
-                cuisine_tags = list(set(cuisine_tags))[:5]
+                cuisine_tags = list(set(cuisine_tags))[:6]
 
 
 
