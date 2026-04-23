@@ -79,7 +79,7 @@ if check_password():
         st.rerun()
 
     # --- MAIN MODULE: MENU TAGGER ---
-    st.title(":label: Hobz AI Menu Tagger")
+    st.title(":label: Hobz Menu Tagger")
     blacklist, clean_tags, cuisine_map, group_map = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
