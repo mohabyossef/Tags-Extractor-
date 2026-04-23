@@ -168,7 +168,7 @@ if check_password():
                     if str(t).lower() in res_name.lower():
                         cuisine_tags.append(str(t))
                 
-                cuisine_tags = list(set(cuisine_tags))[:5]
+                cuisine_tags = list(set(cuisine_tags))[:7]
 
                 # --- 6. SUBPAGE LOGIC ---
                 subpages = []
