@@ -108,4 +108,98 @@ if check_password():
                     match_count = sum(1 for context in merged_items if t_search in context.lower())
                     if match_count > 0:
                         p = (match_count / total_count) * 100
-                        item_stats.append({"tag
+                        item_stats.append({"tag": tag, "perc": p})
+                        tag_perc_lookup[tag.lower()] = p
+                
+                stats_df = pd.DataFrame(item_stats)
+
+                # --- CUISINE & AGGREGATE LOGIC ---
+                cuisine_tags = []
+                additional_normal_tags = []
+
+                # Name Matches
+                for target, triggers in cuisine_map.items():
+                    if target.lower() in res_name.lower():
+                        cuisine_tags.append(target)
+                    for trig in triggers:
+                        if trig in res_name.lower():
+                            cuisine_tags.append(target)
+
+                # Aggregate Matches
+                for target, triggers in cuisine_map.items():
+                    combined_perc = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
+                    if combined_perc >= 30:
+                        cuisine_tags.append(target)
+                        additional_normal_tags.append(target)
+
+                # --- NORMAL TAGS LOGIC ---
+                normal_tags = []
+                if not stats_df.empty:
+                    # 1. Individual 30% hits
+                    normal_tags = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
+                    # 2. Aggregated parent tags
+                    normal_tags.extend(additional_normal_tags)
+                    # 3. All other hits (removed .head(3) to show all eligible findings)
+                    fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]['tag'].tolist()
+                    normal_tags.extend(fallback_pool)
+                
+                normal_tags = list(set(normal_tags))
+
+                # Direct word matches for Cuisines
+                for t in clean_tags:
+                    if "Subpage" in str(t): continue
+                    t_lower = str(t).lower()
+                    if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags):
+                        cuisine_tags.append(str(t))
+
+                cuisine_tags = list(set(cuisine_tags))
+
+                # --- SUBPAGE LOGIC ---
+                subpages = []
+                refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
+                for t in clean_tags:
+                    if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
+                        subpages.append(str(t))
+
+                with col2:
+                    st.subheader(":hospital: Menu Health Check")
+                    h_col1, h_col2, h_col3 = st.columns(3)
+                    h_col1.metric("Items Scanned", final_count)
+                    h_col2.metric("Duplicates Cleared", initial_count - final_count)
+                    if final_count < 10: h_col3.warning(":warning: Small Menu")
+                    else: h_col3.success(":white_check_mark: Data Healthy")
+
+                    st.divider()
+                    st.warning("ℹ️ Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
+
+                    st.subheader(":clipboard: Audit Results")
+                    c1, c2, c3 = st.columns(3)
+                    
+                    with c1:
+                        st.write("**Cuisine Tags**")
+                        if cuisine_tags:
+                            for c in sorted(cuisine_tags): st.success(c)
+                        else: st.write("N/A")
+                        
+                    with c2:
+                        st.write("**Normal Tags**")
+                        if normal_tags:
+                            display_df = stats_df[stats_df['tag'].isin(normal_tags)].copy()
+                            for add_t in additional_normal_tags:
+                                if add_t not in display_df['tag'].values:
+                                    trigs = cuisine_map.get(add_t, [])
+                                    agg_p = sum(tag_perc_lookup.get(tr, 0) for tr in trigs)
+                                    display_df = pd.concat([display_df, pd.DataFrame([{"tag": add_t, "perc": agg_p}])])
+                            
+                            for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
+                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else: st.write("N/A")
+                        
+                    with c3:
+                        st.write("**Subpages**")
+                        if subpages:
+                            for s in sorted(list(set(subpages))): st.warning(s)
+                        else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View: Item Breakdown"):
+                        st.write(stats_df.sort_values(by='perc', ascending=False))
