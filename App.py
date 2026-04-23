@@ -162,4 +162,63 @@ if check_password():
                     high_perc_tags = stats_df[stats_df['perc'] >= 40]['tag'].tolist()
                     high_accuracy_refs.extend([str(t).lower() for t in high_perc_tags])
                 
-                high_accuracy_refs = list(set([r for r in high_accuracy_refs if len(
+                high_accuracy_refs = list(set([r for r in high_accuracy_refs if len(r) > 3]))
+
+                for t in clean_tags:
+                    t_str = str(t)
+                    if "Subpage" in t_str:
+                        # Clean tag for matching (e.g., "Subpage - Sushi" -> "sushi")
+                        t_clean = t_str.replace("Subpage", "").replace("-", "").strip().lower()
+                        if any(ref == t_clean or ref in t_clean for ref in high_accuracy_refs):
+                            subpages.append(t_str)
+                
+                # Take only the top match for primary identity
+                subpages = sorted(list(set(subpages)))[:1]
+
+                with col2:
+                    st.subheader(":hospital: Menu Health Check")
+                    h_col1, h_col2, h_col3 = st.columns(3)
+                    h_col1.metric("Items Scanned", final_count)
+                    h_col2.metric("Duplicates Cleared", duplicates_removed)
+                    if final_count < 10: h_col3.warning(":warning: Small Menu")
+                    else: h_col3.success(":white_check_mark: Data Healthy")
+
+                    st.divider()
+                    st.warning("ℹ️ Don't forget To add the mandatory tags for UAE: Cplus, New Restaurants")
+
+                    st.subheader(":clipboard: Audit Results")
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        st.write("**Cuisine Tags**")
+                        if cuisine_tags:
+                            for c in cuisine_tags: st.success(c)
+                        else: st.write("N/A")
+                    with c2:
+                        st.write("**Normal Tags**")
+                        if normal_tags:
+                            # Filter stats_df to show only normal_tags
+                            display_df = stats_df[stats_df['tag'].isin(normal_tags)].sort_values(by='perc', ascending=False)
+                            
+                            # Ensure additional parent tags are included in display
+                            for add_t in additional_normal_tags:
+                                if add_t not in display_df['tag'].values:
+                                    trigs = cuisine_map.get(add_t, [])
+                                    agg_p = sum(tag_perc_lookup.get(tr, 0) for tr in trigs)
+                                    new_row = pd.DataFrame([{"tag": add_t, "perc": agg_p}])
+                                    display_df = pd.concat([display_df, new_row])
+                            
+                            for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
+                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else:
+                            st.write("N/A")
+                    with c3:
+                        st.write("**Subpages**")
+                        if subpages:
+                            for s in subpages: st.warning(s)
+                        else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View: Item Breakdown"):
+                        if not stats_df.empty:
+                            st.write(stats_df.sort_values(by='perc', ascending=False))
+                        else:
+                            st.write("No tags matched.")
