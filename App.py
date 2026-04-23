@@ -144,11 +144,11 @@ if check_password():
                     # Show EVERY tag crossing 30% individually
                     normal_tags_list = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
                     
-                    # Add every Parent Tag triggered by aggregates
+                    # Add Parent Tags triggered by aggregates
                     for f in forced_normal_tags:
                         normal_tags_list.append(f['tag'])
                     
-                    # Plus the standard Top 3 fallback for diversity
+                    # Fallback Top 3
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags_list.extend(top_items)
@@ -184,4 +184,20 @@ if check_password():
                         
                         if not display_df.empty:
                             for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key
+                                # --- FIXED SYNTAX HERE ---
+                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else: st.write("N/A")
+                        
+                    with c3:
+                        subpages = []
+                        refs = [str(x).lower() for x in (normal_tags_list + cuisine_tags)]
+                        for t in clean_tags:
+                            if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
+                                subpages.append(str(t))
+                        st.write("**Subpages (All Matches)**")
+                        if subpages:
+                            for s in sorted(list(set(subpages))): st.warning(s)
+                        else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View: Item Breakdown"):
+                        st.write(stats_df.sort_values(by='perc', ascending=False))
