@@ -105,7 +105,6 @@ if check_password():
                 tag_perc_lookup = {}
                 item_stats = []
                 
-                # PRE-CALCULATE ALL TAG PERCENTAGES
                 for tag in clean_tags:
                     if "Subpage" in str(tag): continue
                     t_search = str(tag).lower().strip()
@@ -117,38 +116,40 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- UNRESTRICTED CUISINE LOGIC ---
+                # --- CUISINE & AGGREGATE LOGIC (UNRESTRICTED) ---
                 cuisine_tags = []
                 forced_normal_tags = []
 
-                # 1. PRIORITY: Check Restaurant Name
+                # PRIORITY 1: Restaurant Name Check
+                # Checks if any Tag from the Tag Sheet or Mapping triggers is in the Res Name
                 for t in clean_tags:
                     if str(t).lower() in res_name.lower():
                         cuisine_tags.append(str(t))
-
-                # 2. PRIORITY: Mapping & Aggregation
+                
                 for target, triggers in cuisine_map.items():
                     if target.lower() in res_name.lower() or any(trig in res_name.lower() for trig in triggers):
                         cuisine_tags.append(target)
-                    
+                        forced_normal_tags.append({"tag": target, "perc": 100.0}) # Mark as 100% because in name
+
+                    # PRIORITY 2: Menu Aggregation (Ramen + Noodles = Asian)
                     combined_p = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_p >= 30:
                         cuisine_tags.append(target)
                         forced_normal_tags.append({"tag": target, "perc": combined_p})
 
-                cuisine_tags = list(set(cuisine_tags))
+                cuisine_tags = sorted(list(set(cuisine_tags)))
 
-                # --- UNRESTRICTED NORMAL TAGS LOGIC ---
+                # --- NORMAL TAGS LOGIC (UNRESTRICTED) ---
                 normal_tags_list = []
                 if not stats_df.empty:
-                    # Show EVERY tag crossing 30% individually
+                    # Individual 30% hits
                     normal_tags_list = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
                     
-                    # Add Parent Tags triggered by aggregates
+                    # Add forced tags from name or aggregation
                     for f in forced_normal_tags:
                         normal_tags_list.append(f['tag'])
                     
-                    # Fallback Top 3
+                    # Add Top 3 fallback if list is short
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags_list.extend(top_items)
@@ -170,13 +171,13 @@ if check_password():
                     c1, c2, c3 = st.columns(3)
                     
                     with c1:
-                        st.write("**Cuisine Tags (All Matches)**")
+                        st.write("**Cuisine Tags (All)**")
                         if cuisine_tags:
-                            for c in sorted(cuisine_tags): st.success(c)
+                            for c in cuisine_tags: st.success(c)
                         else: st.write("N/A")
                         
                     with c2:
-                        st.write("**Normal Tags (All Matches)**")
+                        st.write("**Normal Tags (All)**")
                         display_df = stats_df[stats_df['tag'].isin(normal_tags_list)].copy()
                         for f in forced_normal_tags:
                             if f['tag'] not in display_df['tag'].values:
@@ -184,7 +185,6 @@ if check_password():
                         
                         if not display_df.empty:
                             for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
-                                # --- FIXED SYNTAX HERE ---
                                 st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
                         else: st.write("N/A")
                         
@@ -194,7 +194,7 @@ if check_password():
                         for t in clean_tags:
                             if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
                                 subpages.append(str(t))
-                        st.write("**Subpages (All Matches)**")
+                        st.write("**Subpages (All)**")
                         if subpages:
                             for s in sorted(list(set(subpages))): st.warning(s)
                         else: st.error("Manual Required")
