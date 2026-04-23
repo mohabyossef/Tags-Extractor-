@@ -117,42 +117,38 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- NEW PRIORITY-BASED CUISINE LOGIC ---
+                # --- UNRESTRICTED CUISINE LOGIC ---
                 cuisine_tags = []
                 forced_normal_tags = []
 
-                # 1. PRIORITY: Check Restaurant Name for Tag Sheet Matches
-                # If "Japanese" is in the name and "Japanese" is in clean_tags, it's a win.
+                # 1. PRIORITY: Check Restaurant Name
                 for t in clean_tags:
                     if str(t).lower() in res_name.lower():
                         cuisine_tags.append(str(t))
 
-                # 2. PRIORITY: Check Cuisine Map for Aggregates or Triggers
+                # 2. PRIORITY: Mapping & Aggregation
                 for target, triggers in cuisine_map.items():
-                    # If target name is in Res name, or any trigger is in Res name
                     if target.lower() in res_name.lower() or any(trig in res_name.lower() for trig in triggers):
                         cuisine_tags.append(target)
                     
-                    # If combined triggers from menu exceed 30%
                     combined_p = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_p >= 30:
                         cuisine_tags.append(target)
                         forced_normal_tags.append({"tag": target, "perc": combined_p})
 
-                # Deduplicate Cuisine
                 cuisine_tags = list(set(cuisine_tags))
 
-                # --- NORMAL TAGS LOGIC ---
+                # --- UNRESTRICTED NORMAL TAGS LOGIC ---
                 normal_tags_list = []
                 if not stats_df.empty:
-                    # Individual 30% hits
+                    # Show EVERY tag crossing 30% individually
                     normal_tags_list = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
                     
-                    # Add Aggregate Targets (like Asian/Japanese)
+                    # Add every Parent Tag triggered by aggregates
                     for f in forced_normal_tags:
                         normal_tags_list.append(f['tag'])
                     
-                    # Fallback Top 3 (excluding active blacklist)
+                    # Plus the standard Top 3 fallback for diversity
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags_list.extend(top_items)
@@ -174,14 +170,13 @@ if check_password():
                     c1, c2, c3 = st.columns(3)
                     
                     with c1:
-                        st.write("**Cuisine Tags**")
+                        st.write("**Cuisine Tags (All Matches)**")
                         if cuisine_tags:
-                            for c in cuisine_tags[:4]: st.success(c)
+                            for c in sorted(cuisine_tags): st.success(c)
                         else: st.write("N/A")
                         
                     with c2:
-                        st.write("**Normal Tags**")
-                        # Build a display dataframe including forced tags
+                        st.write("**Normal Tags (All Matches)**")
                         display_df = stats_df[stats_df['tag'].isin(normal_tags_list)].copy()
                         for f in forced_normal_tags:
                             if f['tag'] not in display_df['tag'].values:
@@ -189,20 +184,4 @@ if check_password():
                         
                         if not display_df.empty:
                             for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
-                        else: st.write("N/A")
-                        
-                    with c3:
-                        # Subpage Logic
-                        subpages = []
-                        refs = [str(x).lower() for x in (normal_tags_list + cuisine_tags)]
-                        for t in clean_tags:
-                            if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
-                                subpages.append(str(t))
-                        st.write("**Subpages**")
-                        if subpages:
-                            for s in list(set(subpages))[:3]: st.warning(s)
-                        else: st.error("Manual Required")
-                        
-                    with st.expander(":mag: Debug View: Item Breakdown"):
-                        st.write(stats_df.sort_values(by='perc', ascending=False))
+                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key
