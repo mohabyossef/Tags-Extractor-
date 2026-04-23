@@ -83,13 +83,11 @@ if check_password():
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
         if len(df.columns) >= 2:
-            # Cleanup & Duplicate Removal
             initial_count = len(df)
             df = df.dropna(subset=[df.columns[0], df.columns[1]]).drop_duplicates()
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
-            # 40% Smart Override
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
@@ -116,47 +114,47 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- CUISINE & AGGREGATE LOGIC ---
+                # --- UNRESTRICTED PRIORITY LOGIC ---
                 cuisine_tags = []
-                forced_tags_from_name = []
+                forced_normal_tags = []
 
-                # NEW: Instant Trigger from Restaurant Name
+                # 1. Restaurant Name Check (Direct Master Tags)
                 for t in clean_tags:
                     if str(t).lower() in res_name.lower():
                         cuisine_tags.append(str(t))
-                        forced_tags_from_name.append(str(t))
+                        forced_normal_tags.append({"tag": str(t), "perc": 100.0})
 
-                # Check Mapping/Aggregation Triggers
-                additional_normal_tags = []
+                # 2. Restaurant Name Check (Mapping Triggers)
                 for target, triggers in cuisine_map.items():
-                    # Check Name for Mapping triggers
                     if target.lower() in res_name.lower() or any(trig in res_name.lower() for trig in triggers):
                         cuisine_tags.append(target)
-                        if target not in forced_tags_from_name:
-                            forced_tags_from_name.append(target)
-
-                    # Combined Percentage Logic (Ramen + Noodles)
+                        forced_normal_tags.append({"tag": target, "perc": 100.0})
+                    
+                    # 3. Aggregate Percentages (Ramen + Noodles = Asian)
                     combined_perc = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_perc >= 30:
                         cuisine_tags.append(target)
-                        additional_normal_tags.append({"tag": target, "perc": combined_perc})
+                        forced_normal_tags.append({"tag": target, "perc": combined_perc})
 
-                # Display Logic for Normal Tags
+                # Deduplicate
+                cuisine_tags = list(set(cuisine_tags))
+
+                # --- NORMAL TAGS LOGIC ---
                 normal_tags = []
                 if not stats_df.empty:
-                    # 1. 30% individually
+                    # Individual 30% hits
                     normal_tags = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
-                    # 2. Aggregated Parents
-                    normal_tags.extend([d['tag'] for d in additional_normal_tags])
-                    # 3. NAME TRIGGERS (FORCED)
-                    normal_tags.extend(forced_tags_from_name)
-                    # 4. Fallback Top 3
+                    
+                    # Add forced/aggregated tags
+                    for f in forced_normal_tags:
+                        normal_tags.append(f['tag'])
+
+                    # Fallback Top 3
                     fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
                     top_items = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
                     normal_tags.extend(top_items)
                 
                 normal_tags = list(set(normal_tags))
-                cuisine_tags = list(set(cuisine_tags))
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
@@ -172,25 +170,22 @@ if check_password():
                     st.subheader(":clipboard: Audit Results")
                     c1, c2, c3 = st.columns(3)
                     with c1:
-                        st.write("**Cuisine Tags**")
+                        st.write("**Cuisine Tags (Priority & Aggregated)**")
                         if cuisine_tags:
                             for c in sorted(cuisine_tags): st.success(c)
                         else: st.write("N/A")
                     with c2:
                         st.write("**Normal Tags**")
                         display_df = stats_df[stats_df['tag'].isin(normal_tags)].copy()
-                        
-                        # Ensure forced tags from name show up with 100% or their aggregate score
-                        for ft in forced_tags_from_name:
-                            if ft not in display_df['tag'].values:
-                                display_df = pd.concat([display_df, pd.DataFrame([{"tag": ft, "perc": 100.0}])])
-                        for ant in additional_normal_tags:
-                            if ant['tag'] not in display_df['tag'].values:
-                                display_df = pd.concat([display_df, pd.DataFrame([ant])])
+                        for f in forced_normal_tags:
+                            if f['tag'] not in display_df['tag'].values:
+                                display_df = pd.concat([display_df, pd.DataFrame([f])])
                         
                         if not display_df.empty:
                             for _, row in display_df.sort_values(by='perc', ascending=False).iterrows():
                                 st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        else: st.write("N/A")
+
                     with c3:
                         subpages = []
                         refs = [str(x).lower() for x in (normal_tags + cuisine_tags)]
@@ -199,5 +194,8 @@ if check_password():
                                 subpages.append(str(t))
                         st.write("**Subpages**")
                         if subpages:
-                            for s in sorted(list(set(subpages)))[:5]: st.warning(s)
+                            for s in sorted(list(set(subpages))): st.warning(s)
                         else: st.error("Manual Required")
+                        
+                    with st.expander(":mag: Debug View"):
+                        st.write(stats_df.sort_values(by='perc', ascending=False))
