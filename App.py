@@ -52,7 +52,6 @@ if check_password():
             campaign_regex = r"%|\boff\b|\bsale\b|\bsar\b|\bjod\b|\bdeal\b|\boffer\b|\bdiscount\b|\bpromo\b"
             clean_tags = [str(t).strip() for t in all_tags if not re.search(campaign_regex, str(t), re.IGNORECASE)]
         
-        # --- CUISINE MAPPING LOADER ---
         mapping_df = try_read("cuisine_mapping")
         if mapping_df is not None:
             for _, row in mapping_df.iterrows():
@@ -62,7 +61,6 @@ if check_password():
                     if target not in cuisine_map: cuisine_map[target] = []
                     cuisine_map[target].append(trigger)
 
-        # --- GROUP MAPPING LOADER ---
         group_df = try_read("group_mapping")
         if group_df is not None:
             for _, row in group_df.iterrows():
@@ -98,7 +96,6 @@ if check_password():
             final_count = len(df)
             duplicates_removed = initial_count - final_count
 
-            # 40% Smart Override Logic
             original_total = len(df)
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
             cat_counts = cat_series.value_counts()
@@ -129,7 +126,6 @@ if check_password():
                 cuisine_tags = []
                 additional_normal_tags = []
 
-                # Check Restaurant Name Priority
                 for target, triggers in cuisine_map.items():
                     if target.lower() in res_name.lower():
                         cuisine_tags.append(target)
@@ -137,14 +133,12 @@ if check_password():
                         if trig in res_name.lower():
                             cuisine_tags.append(target)
 
-                # Check Aggregate Percentages (Ramen + Noodles Logic)
                 for target, triggers in cuisine_map.items():
                     combined_perc = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_perc >= 30:
                         cuisine_tags.append(target)
                         additional_normal_tags.append(target)
 
-                # Normal Tags Generation
                 normal_tags = []
                 if not stats_df.empty:
                     normal_tags = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
@@ -155,34 +149,40 @@ if check_password():
                 
                 normal_tags = list(set(normal_tags))
 
-                # Standard Cuisine check (Direct match based on items)
                 for t in clean_tags:
                     if "Subpage" in str(t): continue
                     t_lower = str(t).lower()
                     if t_lower in res_name.lower() or any(t_lower == str(nt).lower() for nt in normal_tags):
                         cuisine_tags.append(str(t))
 
-                # --- GROUP AGGREGATION ---
                 current_results = [c.lower() for c in cuisine_tags]
                 for group_name, members in group_map.items():
                     if any(m in current_results for m in members):
                         cuisine_tags.append(group_name)
 
-                # FINAL CUISINE TAGS RESULT
                 cuisine_tags = list(set(cuisine_tags))[:5]
 
                 # --- UPDATED SUBPAGE LOGIC ---
-                # Now based STRICTLY on the Final Cuisine Results
                 subpages = []
-                final_cuisine_refs = [str(x).lower() for x in cuisine_tags]
+                # Combine results for matching
+                final_refs = list(set([str(x).lower() for x in (normal_tags + cuisine_tags)]))
                 
+                # Step 1: Attempt 2-keyword match
                 for t in clean_tags:
-                    tag_str = str(t)
-                    if "Subpage" in tag_str:
-                        # Check if this subpage tag contains any of our final cuisine words
-                        # e.g., if "Burgers Subpage" contains "burgers"
-                        if any(ref in tag_str.lower() for ref in final_cuisine_refs if len(ref) > 2):
-                            subpages.append(tag_str)
+                    t_str = str(t).lower()
+                    if "subpage" in t_str:
+                        # Count how many final cuisine/normal tags are found in this subpage tag
+                        matches = sum(1 for r in final_refs if len(r) > 3 and r in t_str)
+                        if matches >= 2:
+                            subpages.append(str(t))
+                
+                # Step 2: Fallback to original logic if no double-matches found
+                if not subpages:
+                    for t in clean_tags:
+                        t_str = str(t).lower()
+                        if "subpage" in t_str:
+                            if any(r in t_str for r in final_refs if len(r) > 3):
+                                subpages.append(str(t))
 
                 with col2:
                     st.subheader(":hospital: Menu Health Check")
@@ -218,6 +218,7 @@ if check_password():
                     with c3:
                         st.write("**Subpages**")
                         if subpages:
+                            # Use set to remove duplicates, limit to 3 for clean view
                             for s in list(set(subpages))[:3]: st.warning(s)
                         else: st.error("Manual Required")
                         
