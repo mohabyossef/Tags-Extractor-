@@ -121,18 +121,18 @@ if check_password():
                 
                 stats_df = pd.DataFrame(item_stats)
 
-                # --- 4. TRIGGER GROUP CALCULATION ---
-                group_results = {}
+                # --- 4. TRIGGER GROUP CALCULATION (CUISINE ONLY) ---
+                group_triggered_cuisines = []
                 for group_tag, words in trigger_groups.items():
                     combined_p = sum(tag_perc_lookup.get(w, 0) for w in words)
                     if combined_p >= 30:
-                        group_results[group_tag] = combined_p
+                        group_triggered_cuisines.append(group_tag)
 
                 # --- 5. CUISINE & NORMAL TAG AGGREGATION ---
-                cuisine_tags = list(group_results.keys())
-                normal_tags_to_display = list(group_results.keys())
+                cuisine_tags = list(set(group_triggered_cuisines))
+                normal_tags_to_display = [] # Does NOT include groups now
 
-                # Check Restaurant Name
+                # Check Restaurant Name for Cuisines
                 for target, triggers in cuisine_map.items():
                     if target.lower() in res_name.lower():
                         cuisine_tags.append(target)
@@ -145,6 +145,7 @@ if check_password():
                     combined_perc = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_perc >= 30:
                         cuisine_tags.append(target)
+                        # We still add standard mapping targets to normal tags if you want them visible
                         normal_tags_to_display.append(target)
 
                 # Menu Individual Tags (>= 30%)
@@ -161,7 +162,7 @@ if check_password():
                 cuisine_tags = list(set(cuisine_tags))
                 normal_tags_to_display = list(set(normal_tags_to_display))
 
-                # Add logic to check for direct word matches in name for final cuisine list
+                # Direct word matches in name for final cuisine list
                 for t in clean_tags:
                     if "Subpage" in str(t): continue
                     if str(t).lower() in res_name.lower():
@@ -171,6 +172,7 @@ if check_password():
 
                 # --- 6. SUBPAGE LOGIC ---
                 subpages = []
+                # Subpages can be triggered by either list
                 refs = [str(x).lower() for x in (normal_tags_to_display + cuisine_tags)]
                 for t in clean_tags:
                     if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
@@ -192,26 +194,10 @@ if check_password():
                         st.write("**Normal Tags**")
                         display_data = []
                         for nt in normal_tags_to_display:
-                            # 1. Check if it's a direct menu tag
+                            # Direct menu tag perc
                             p = tag_perc_lookup.get(nt.lower(), 0)
-                            # 2. Check if it's a triggered group tag
-                            if p == 0 and nt in group_results:
-                                p = group_results[nt]
-                            # 3. Check if it's a standard cuisine mapping
+                            # Or standard cuisine mapping perc
                             if p == 0 and nt in cuisine_map:
                                 p = sum(tag_perc_lookup.get(tr, 0) for tr in cuisine_map[nt])
                             
-                            display_data.append({"tag": nt, "perc": p})
-                        
-                        if display_data:
-                            display_df = pd.DataFrame(display_data).sort_values(by='perc', ascending=False)
-                            for _, row in display_df.iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
-                        else:
-                            st.write("N/A")
-
-                    with c3:
-                        st.write("**Subpages**")
-                        if subpages:
-                            for s in list(set(subpages))[:3]: st.warning(s)
-                        else: st.error("Manual Required")
+                            display_data.append({"tag":
