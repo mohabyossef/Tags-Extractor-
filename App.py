@@ -34,14 +34,19 @@ if check_password():
     # --- 2. DATA LOADERS ---
     @st.cache_data
     def load_tagging_resources():
-        blacklist, clean_tags, cuisine_map = [], [], {}
+        blacklist, clean_tags, cuisine_map, all_triggers = [], [], {}, set()
+        
         def try_read(base_name):
-            if os.path.exists(f"{base_name}.csv"):
-                return pd.read_csv(f"{base_name}.csv")
-            elif os.path.exists(f"{base_name}.xlsx"):
-                return pd.read_excel(f"{base_name}.xlsx")
+            # Tries various names for compatibility
+            possible_names = [base_name, f"{base_name}_sheet", f"the_{base_name}_sheet"]
+            for name in possible_names:
+                for ext in [".csv", ".xlsx"]:
+                    path = f"{name}{ext}"
+                    if os.path.exists(path):
+                        return pd.read_csv(path) if ext == ".csv" else pd.read_excel(path)
             return None
 
+        # Load resources
         bl_df = try_read("blacklist")
         if bl_df is not None:
             blacklist = [str(x).strip().lower() for x in bl_df.iloc[:, 0].dropna()]
@@ -61,33 +66,35 @@ if check_password():
                     if target not in cuisine_map:
                         cuisine_map[target] = []
                     cuisine_map[target].append(trigger)
+                    all_triggers.add(trigger)
             
-        return blacklist, clean_tags, cuisine_map
+        return blacklist, clean_tags, cuisine_map, all_triggers
 
+    # --- 3. UI SIDEBAR ---
     st.sidebar.title(":hammer_and_wrench: Hobz AI Tagger")
     if st.sidebar.button("Logout"):
         st.session_state["password_correct"] = False
         st.rerun()
 
     st.title(":label: Hobz AI Menu Tagger")
-    blacklist, clean_tags, cuisine_map = load_tagging_resources()
+    blacklist, clean_tags, cuisine_map, all_triggers = load_tagging_resources()
     
     col1, col2 = st.columns([1, 2])
     with col1:
-        res_name = st.text_input("Restaurant Name")
+        res_name = st.text_input("Restaurant Name", help="Matches here are given 100% priority.")
         upload_file = st.file_uploader("Upload Menu (Excel/CSV)", type=['xlsx', 'csv'])
         
     if upload_file:
         df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
         
         if len(df.columns) >= 2:
-            # cleanup
+            # Data Pre-processing
             df = df.dropna(subset=[df.columns[0], df.columns[1]]).drop_duplicates()
             final_count = len(df)
-
+            
             cat_series = df.iloc[:, 0].astype(str).str.lower().str.strip()
-            cat_counts = cat_series.value_counts()
-            rescued_categories = [cat for cat, count in cat_counts.items() if cat in blacklist and (count / final_count) >= 0.40]
+            rescued_categories = [cat for cat, count in cat_series.value_counts().items() 
+                                 if cat in blacklist and (count / final_count) >= 0.40]
             active_blacklist = [b for b in blacklist if b not in rescued_categories]
             
             df_clean = df[~cat_series.isin(active_blacklist)].copy()
@@ -96,66 +103,68 @@ if check_password():
             total_count = len(merged_items)
 
             if total_count > 0:
+                # 1. SCAN MENU FOR EVERYTHING (Tags + Triggers + Targets)
                 tag_perc_lookup = {}
-                item_stats = []
+                search_pool = set([t.lower() for t in clean_tags]) | all_triggers | set([k.lower() for k in cuisine_map.keys()])
                 
-                # Pre-calculate menu percentages
-                for tag in clean_tags:
-                    if "Subpage" in str(tag): continue
-                    t_search = str(tag).lower().strip()
-                    match_count = sum(1 for context in merged_items if t_search in context.lower())
+                for term in search_pool:
+                    match_count = sum(1 for context in merged_items if term in context.lower())
                     if match_count > 0:
-                        p = (match_count / total_count) * 100
-                        tag_perc_lookup[tag.lower()] = p
-                        item_stats.append({"tag": tag, "perc": p})
-                
-                stats_df = pd.DataFrame(item_stats)
+                        tag_perc_lookup[term] = (match_count / total_count) * 100
 
-                # --- UNRESTRICTED COMBINED COLLECTION ---
-                final_cuisine_set = set()
-                final_normal_set = set()
-                forced_percs = {} # To prioritize name-based 100% display
+                # 2. DEFINE MASTER SETS (The Union Logic)
+                final_cuisine_tags = set()
+                final_normal_tags = set()
+                forced_percs = {} # Stores scores for the UI display
 
-                # 1. PRIORITY: RESTAURANT NAME (Master tags & Mapped Targets)
+                # --- PHASE A: RESTAURANT NAME (GLOBAL PRIORITY) ---
                 if res_name:
-                    n_low = res_name.lower()
+                    name_low = res_name.lower()
+                    # Check Master Tags
                     for t in clean_tags:
-                        if t.lower() in n_low:
-                            final_cuisine_set.add(t)
-                            final_normal_set.add(t)
+                        if t.lower() in name_low:
+                            final_cuisine_tags.add(t)
+                            final_normal_tags.add(t)
                             forced_percs[t] = 100.0
+                    # Check Mapping Targets and Triggers
                     for target, triggers in cuisine_map.items():
-                        if target.lower() in n_low or any(trig in n_low for trig in triggers):
-                            final_cuisine_set.add(target)
-                            final_normal_set.add(target)
+                        if target.lower() in name_low or any(trig in name_low for trig in triggers):
+                            final_cuisine_tags.add(target)
+                            final_normal_tags.add(target)
                             forced_percs[target] = 100.0
 
-                # 2. MENU AGGREGATION (e.g. Ramen + Noodles = Asian)
+                # --- PHASE B: AGGREGATE MENU LOGIC ---
                 for target, triggers in cuisine_map.items():
                     combined_p = sum(tag_perc_lookup.get(trig, 0) for trig in triggers)
                     if combined_p >= 30:
-                        final_cuisine_set.add(target)
-                        final_normal_set.add(target)
-                        if target not in forced_percs: forced_percs[target] = combined_p
+                        final_cuisine_tags.add(target)
+                        final_normal_tags.add(target)
+                        if target not in forced_percs:
+                            forced_percs[target] = combined_p
 
-                # 3. INDIVIDUAL MENU ELIGIBILITY (30%)
-                if not stats_df.empty:
-                    menu_hits = stats_df[stats_df['perc'] >= 30]['tag'].tolist()
-                    for mh in menu_hits:
-                        final_normal_set.add(mh)
-                        # Promote dishes to cuisine column if they are in master tags
-                        if mh.lower() in [str(t).lower() for t in clean_tags]:
-                            final_cuisine_set.add(mh)
+                # --- PHASE C: INDIVIDUAL ELIGIBILITY (30%) ---
+                for tag in clean_tags:
+                    p = tag_perc_lookup.get(tag.lower(), 0)
+                    if p >= 30:
+                        final_normal_tags.add(tag)
+                        # Auto-promote to cuisine if it's a known cuisine term
+                        final_cuisine_tags.add(tag)
 
-                # 4. FALLBACK DIVERSITY (Top 3)
-                fallback_pool = stats_df[~stats_df['tag'].str.lower().isin(active_blacklist)]
-                top_3 = fallback_pool.sort_values(by='perc', ascending=False).head(3)['tag'].tolist()
-                for t in top_3:
-                    final_normal_set.add(t)
+                # --- PHASE D: FALLBACK DIVERSITY (Top 3) ---
+                # Only adds tags NOT in blacklist to normal set
+                fallback_pool = sorted(tag_perc_lookup.items(), key=lambda x: x[1], reverse=True)
+                added_count = 0
+                for tag_low, p in fallback_pool:
+                    if tag_low not in active_blacklist and added_count < 3:
+                        # Find original casing from clean_tags or use capitalized
+                        original_name = next((t for t in clean_tags if t.lower() == tag_low), tag_low.capitalize())
+                        final_normal_tags.add(original_name)
+                        added_count += 1
 
+                # --- UI DISPLAY ---
                 with col2:
-                    st.subheader(":hospital: Health Check")
-                    st.write(f"Scanned {final_count} unique items. Auditing {total_count} clean items.")
+                    st.subheader(":hospital: Menu Health Check")
+                    st.write(f"Scanned {final_count} items. Total valid for audit: {total_count}")
                     st.divider()
                     st.warning("ℹ️ Mandatory UAE Tags: Cplus, New Restaurants")
 
@@ -164,30 +173,31 @@ if check_password():
                     
                     with c1:
                         st.write("**Cuisine Tags**")
-                        # Combine ALL findings: Name triggers + Menu triggers
-                        if final_cuisine_set:
-                            for c in sorted(list(final_cuisine_set)): st.success(c)
+                        # This combines Name Priority + Aggregation + Menu Threshold
+                        if final_cuisine_tags:
+                            for c in sorted(list(final_cuisine_tags)): st.success(c)
                         else: st.write("N/A")
                         
                     with c2:
                         st.write("**Normal Tags**")
-                        display_data = []
-                        for tag_name in final_normal_set:
-                            # Show 100% if from name, else aggregate/menu score
+                        # Build button list based on prioritized percentages
+                        display_list = []
+                        for tag_name in final_normal_tags:
                             p = forced_percs.get(tag_name, tag_perc_lookup.get(tag_name.lower(), 0))
-                            display_data.append({"tag": tag_name, "perc": p})
+                            display_list.append({"name": tag_name, "perc": p})
                         
-                        if display_data:
-                            d_df = pd.DataFrame(display_data).sort_values(by='perc', ascending=False)
-                            for _, row in d_df.iterrows():
-                                st.button(f"{row['tag']} ({row['perc']:.1f}%)", key=f"btn_{row['tag']}")
+                        if display_list:
+                            display_df = pd.DataFrame(display_list).sort_values(by="perc", ascending=False)
+                            for _, row in display_df.iterrows():
+                                st.button(f"{row['name']} ({row['perc']:.1f}%)", key=f"btn_{row['name']}")
                         else: st.write("N/A")
-                        
+
                     with c3:
+                        # Subpage Logic
                         subpages = []
-                        refs = [str(x).lower() for x in (list(final_normal_set) + list(final_cuisine_set))]
+                        all_active_refs = [str(x).lower() for x in (list(final_normal_tags) + list(final_cuisine_tags))]
                         for t in clean_tags:
-                            if "Subpage" in str(t) and any(r in str(t).lower() for r in refs if len(r) > 3):
+                            if "Subpage" in str(t) and any(ref in str(t).lower() for ref in all_active_refs if len(ref) > 3):
                                 subpages.append(str(t))
                         st.write("**Subpages**")
                         if subpages:
