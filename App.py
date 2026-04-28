@@ -88,7 +88,19 @@ if check_password():
         upload_file = st.file_uploader("Upload Menu (Excel/CSV)", type=['xlsx', 'csv'])
         
     if upload_file:
-        df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
+        raw_df = pd.read_csv(upload_file) if upload_file.name.endswith('csv') else pd.read_excel(upload_file)
+        
+        # --- SMART COLUMN SELECTION ---
+        # Look for the specific headers. If not found, use columns 0 and 1.
+        cols = raw_df.columns.tolist()
+        target_cat = "category_name"
+        target_item = "item_name"
+        
+        if target_cat in cols and target_item in cols:
+            df = raw_df[[target_cat, target_item]].copy()
+        else:
+            # Fallback to first two columns if specific names aren't found
+            df = raw_df.iloc[:, [0, 1]].copy()
         
         if len(df.columns) >= 2:
             initial_count = len(df)
@@ -164,19 +176,15 @@ if check_password():
 
                 # --- UPDATED SUBPAGE LOGIC ---
                 subpages = []
-                # Combine results for matching
                 final_refs = list(set([str(x).lower() for x in (normal_tags + cuisine_tags)]))
                 
-                # Step 1: Attempt 2-keyword match
                 for t in clean_tags:
                     t_str = str(t).lower()
                     if "subpage" in t_str:
-                        # Count how many final cuisine/normal tags are found in this subpage tag
                         matches = sum(1 for r in final_refs if len(r) > 3 and r in t_str)
                         if matches >= 2:
                             subpages.append(str(t))
                 
-                # Step 2: Fallback to original logic if no double-matches found
                 if not subpages:
                     for t in clean_tags:
                         t_str = str(t).lower()
@@ -218,7 +226,6 @@ if check_password():
                     with c3:
                         st.write("**Subpages**")
                         if subpages:
-                            # Use set to remove duplicates, limit to 3 for clean view
                             for s in list(set(subpages))[:3]: st.warning(s)
                         else: st.error("Manual Required")
                         
